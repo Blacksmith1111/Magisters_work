@@ -5,15 +5,14 @@ from commpy.filters import rrcosfilter
 
 
 def constellation_plot(modulated_signal: complex) -> None:
-    fig, ax = plt.subplots()
     x = modulated_signal.real
     y = modulated_signal.imag
 
-    ax.scatter(x, y)
-    ax.axhline(0, color='black', linestyle='--', linewidth=0.8)
-    ax.axvline(0, color='black', linestyle='--', linewidth=0.8)
-
-    ax.grid(True)
+    plt.figure(1)
+    plt.scatter(x, y)
+    plt.axhline(0, color='black', linestyle='--', linewidth=0.8)
+    plt.axvline(0, color='black', linestyle='--', linewidth=0.8)
+    plt.grid(True)
     plt.show()
 
 def upsample(signal:complex, sps:int) -> complex:
@@ -39,6 +38,23 @@ def pulse_shaping(upsampled_signal: complex, rolloff: float, filter_span: int, s
 
     return shaped_signal
 
+def ber_calc(initial_bits, final_bits) -> float:
+    return np.sum(np.logical_xor(final_bits, initial_bits)) / len(initial_bits)
+
+def quantize(signal, resolution: int, S_max: float):
+    ### DAC full-scale range
+    DAC_rng = np.arange(-2**resolution / 2, 2**resolution / 2, 1)
+    ### Scaling factor
+    G = DAC_rng[-1] / np.abs(S_max)
+    signal_normalized = signal * G
+    I, Q = signal_normalized.real, signal_normalized.imag
+    DAC_indicies_I = np.argmin(np.abs(I[:, None] - DAC_rng[None, :]), axis = 1)
+    DAC_indicies_Q = np.argmin(np.abs(Q[:, None] - DAC_rng[None, :]), axis = 1)
+    I_quantized = DAC_rng[DAC_indicies_I]
+    Q_quantized = DAC_rng[DAC_indicies_Q]
+    print(I_quantized / G + 1j * Q_quantized / G, '\n', signal)
+    return I_quantized + 1j * Q_quantized
+
 def main():
     ### Parameters
     bits_num = 12
@@ -49,6 +65,8 @@ def main():
     Ts = 1 / f_sym       
     rolloff = 0.25
     filter_span = 8      
+    S_max_dict = {'64QAM': np.sqrt(2*7**2), '32QAM': np.sqrt(3**2 + 5**2)}
+
 
     ### PBRS
     bits  = np.random.randint(0, 2, bits_num)
@@ -68,6 +86,10 @@ def main():
         sps=sps, Fs=Fs, Ts=Ts, normaliztion='L2'
     )
     time_delay_tx = filter_span * sps 
+
+    ### Quantizing
+    s = quantize(modulated_signal, resolution = 6, S_max = S_max_dict['64QAM'])
+
 
     plt.figure()
     plt.stem(upsampled_signal.real, label='Upsampled Signal')
@@ -98,9 +120,12 @@ def main():
     ### Downsampling
     downsampled_signal = downsample(recovered_signal, sps)
     print(f'Signal after downsampling: {downsampled_signal}')
-
+    ### Demapping
     demodulated_bits = qam.demodulate(downsampled_signal, 'hard') 
-    print(f'Demodulated bits: {demodulated_bits}')
+    print(f'Initial bits: {bits};\nDemodulated bits: {demodulated_bits}')
+    ### BER calculating
+    ber = ber_calc(bits, demodulated_bits)
+    print(f'BER = {ber}')
 
 
 if __name__ == '__main__':
