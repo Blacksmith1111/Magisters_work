@@ -41,92 +41,33 @@ def pulse_shaping(upsampled_signal: complex, rolloff: float, filter_span: int, s
 def ber_calc(initial_bits, final_bits) -> float:
     return np.sum(np.logical_xor(final_bits, initial_bits)) / len(initial_bits)
 
-def quantize(signal, resolution: int, S_max: float):
+def quantizer(signal, resolution: int, S_max: float):
     ### DAC full-scale range
     DAC_rng = np.arange(-2**resolution / 2, 2**resolution / 2, 1)
     ### Scaling factor
-    G = DAC_rng[-1] / np.abs(S_max)
-    signal_normalized = signal * G
-    I, Q = signal_normalized.real, signal_normalized.imag
-    DAC_indicies_I = np.argmin(np.abs(I[:, None] - DAC_rng[None, :]), axis = 1)
-    DAC_indicies_Q = np.argmin(np.abs(Q[:, None] - DAC_rng[None, :]), axis = 1)
+    scaling_factor_dac = max(np.max(np.abs(signal.real)), np.max(np.abs(signal.imag)))
+    signal_normalized = signal * scaling_factor_dac
+    I_norm, Q_norm = signal_normalized.real, signal_normalized.imag
+    DAC_indicies_I = np.argmin(np.abs(I_norm[:, None] - DAC_rng[None, :]), axis = 1)
+    DAC_indicies_Q = np.argmin(np.abs(Q_norm[:, None] - DAC_rng[None, :]), axis = 1)
     I_quantized = DAC_rng[DAC_indicies_I]
     Q_quantized = DAC_rng[DAC_indicies_Q]
-    print(I_quantized / G + 1j * Q_quantized / G, '\n', signal)
-    return I_quantized + 1j * Q_quantized
+    return I_quantized + 1j * Q_quantized, scaling_factor_dac
 
-def main():
-    ### Parameters
-    bits_num = 12
-    mod_order = 64
-    Fs = 10e3           
-    sps = 10             
-    f_sym = Fs / sps     
-    Ts = 1 / f_sym       
-    rolloff = 0.25
-    filter_span = 8      
-    S_max_dict = {'64QAM': np.sqrt(2*7**2), '32QAM': np.sqrt(3**2 + 5**2)}
+def ADC(signal, adc_bits, dac_bits):
+    scaling_factor_adc = 2**(adc_bits - dac_bits)
+    scaled_signal = signal * scaling_factor_adc
+    return scaled_signal, scaling_factor_adc
 
+def upconversion(baseband_signal, Fc, Fs):
+    t = np.arange(len(baseband_signal)) / Fs
+    
+    passband_signal_complex = baseband_signal * np.exp(2 * np.pi * Fc * t * 1j)
+    passband_signal_real = passband_signal_complex
+    return passband_signal_real
 
-    ### PBRS
-    bits  = np.random.randint(0, 2, bits_num)
-
-    ### QAM modulation
-    qam = mod.QAMModem(mod_order)
-    modulated_signal = qam.modulate(bits)
-    print(f'Modulated signal ({mod_order} QAM): {modulated_signal}')
-
-    ### Upsampling
-    upsampled_signal = upsample(modulated_signal, sps)
-    print(f'Signal after upsampling: {upsampled_signal}')
-
-    ### Pulse shaping (TX)
-    shaped_signal = pulse_shaping(
-        upsampled_signal, rolloff=rolloff, filter_span=filter_span, 
-        sps=sps, Fs=Fs, Ts=Ts, normaliztion='L2'
-    )
-    time_delay_tx = filter_span * sps 
-
-    ### Quantizing
-    s = quantize(modulated_signal, resolution = 6, S_max = S_max_dict['64QAM'])
-
-
-    plt.figure()
-    plt.stem(upsampled_signal.real, label='Upsampled Signal')
-    plt.grid()
-    plt.legend()
-    plt.show()
-
-    plt.figure()
-    plt.plot(shaped_signal[time_delay_tx:-time_delay_tx].real, label='Shaped Signal')
-    plt.grid()
-    plt.legend()
-    plt.show()
-
-    ### Signal recovery (matched filter)
-    recovered_signal = pulse_shaping(
-        shaped_signal, rolloff=rolloff, filter_span=filter_span, 
-        sps=sps, Fs=Fs, Ts=Ts, normaliztion='L2'
-    )
-    time_delay_rx = 2 * time_delay_tx 
-    recovered_signal = recovered_signal[time_delay_rx : time_delay_rx + len(upsampled_signal)]
-
-    plt.figure()
-    plt.stem(recovered_signal.real, label='Recovered Signal')
-    plt.grid()
-    plt.legend()
-    plt.show()
-
-    ### Downsampling
-    downsampled_signal = downsample(recovered_signal, sps)
-    print(f'Signal after downsampling: {downsampled_signal}')
-    ### Demapping
-    demodulated_bits = qam.demodulate(downsampled_signal, 'hard') 
-    print(f'Initial bits: {bits};\nDemodulated bits: {demodulated_bits}')
-    ### BER calculating
-    ber = ber_calc(bits, demodulated_bits)
-    print(f'BER = {ber}')
-
-
-if __name__ == '__main__':
-    main()
+def downconversion(passband_signal, Fc, Fs):
+    t = np.arange(len(passband_signal)) / Fs
+    mixed_signal_complex = passband_signal * np.exp(-2 * np.pi * Fc * t * 1j)
+    
+    return mixed_signal_complex 
