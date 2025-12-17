@@ -3,6 +3,7 @@ import matplotlib.pyplot as plt
 import channel_funcs
 import commpy.modulation as mod
 from scipy import signal as sig
+from commpy.channels import awgn
 
 
 def main():
@@ -21,6 +22,7 @@ def main():
     ADCEn = 1
     quantizerEn = 1
     up_down_convEn = 1
+    snr_db = 10
 
     ### PBRS
     bits  = np.random.randint(0, 2, bits_num)
@@ -53,6 +55,8 @@ def main():
         passband_signal = channel_funcs.upconversion(quantized_signal, Fs = Fs, Fc = Fc)
         title = 'Passband signal spectrum'
         channel_funcs.spectrum_plot(signal = passband_signal, Fs = Fs, title = title)
+        ### AWGN
+        #passband_signal = awgn(passband_signal, snr_dB = snr_db)
         ### Downconversion
         baseband_signal = channel_funcs.downconversion(passband_signal, Fs = Fs, Fc = Fc, B = 1200)
         title = 'Baseband (shifted back) signal spectrum'
@@ -96,6 +100,9 @@ def main():
     ### Scaling
     downsampled_signal /= (scaling_factor_dac * sacling_factor_adc)
     
+    ### NMSE calculation
+    nmse = 20 * np.log10(np.sum((np.abs(downsampled_signal - signal)) ** 2) / np.sum(np.abs(signal) ** 2))
+    print(f'NMSE between the received and the transmitted signal: {nmse} db')
     ### Demapping
     demodulated_bits = qam.demodulate(downsampled_signal, 'hard') 
     print(f'Initial bits: {bits};\nDemodulated bits: {demodulated_bits}')
