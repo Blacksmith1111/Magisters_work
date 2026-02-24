@@ -63,7 +63,7 @@ def pulse_shaping(upsampled_signal: complex, rolloff: float, filter_span: int, s
 def ber_calc(initial_bits, final_bits) -> float:
     return np.sum(np.logical_xor(final_bits, initial_bits)) / len(initial_bits)
 
-def quantizer(signal, resolution: int):
+def quantizer(signal: complex, resolution: int):
     ### DAC full-scale range
     DAC_rng = np.arange(-2**resolution / 2, 2**resolution / 2, 1)
     ### Scaling factor
@@ -74,7 +74,12 @@ def quantizer(signal, resolution: int):
     DAC_indicies_Q = np.argmin(np.abs(Q_norm[:, None] - DAC_rng[None, :]), axis = 1)
     I_quantized = DAC_rng[DAC_indicies_I]
     Q_quantized = DAC_rng[DAC_indicies_Q]
-    return I_quantized + 1j * Q_quantized, scaling_factor_dac
+    ### INL adding
+    INL_vals = INL(DAC_rng)
+    I_quantized += INL_vals[DAC_indicies_I]
+    Q_quantized += INL_vals[DAC_indicies_Q]
+    quantized_signal = I_quantized + 1j * Q_quantized
+    return quantized_signal, scaling_factor_dac
 
 def ADC(signal, adc_bits, dac_bits):
     scaling_factor_adc = 2**(adc_bits - dac_bits)
@@ -102,3 +107,12 @@ def downconversion(passband_signal, Fc, Fs, B, filterEn = True):
         spectrum_plot(mixed_signal_complex, Fs, title = 'After LPF test')
 
     return mixed_signal_complex 
+
+def INL(full_scale):
+    INL_vals = 0.8 * np.sin(2 * np.pi * (full_scale - full_scale[0]) / (len(full_scale)))  # INL in LSB
+    plt.figure()
+    plt.title('INL values')
+    plt.plot(INL_vals)
+    plt.grid()
+    plt.show()
+    return INL_vals

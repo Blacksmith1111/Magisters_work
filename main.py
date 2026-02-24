@@ -8,7 +8,7 @@ from commpy.channels import awgn
 
 def main():
     ### Parameters
-    bits_num = 6 * 1_0000
+    bits_num = 6 * 1_000_0
     mod_order = 64
     Fs = 10e3
     Fc = Fs / 4           
@@ -19,10 +19,10 @@ def main():
     filter_span = 10      
     dac_bits = 6
     adc_bits = 8
-    ADCEn = 1
-    quantizerEn = 1
-    up_down_convEn = 1
-    snr_db = 10
+    ADC_En = 1
+    quantizer_En = 1
+    up_down_conv_En = 1
+    snr_db = 5
 
     ### PBRS
     bits  = np.random.randint(0, 2, bits_num)
@@ -45,18 +45,18 @@ def main():
     title  = 'Original baseband signal spectrum'
     channel_funcs.spectrum_plot(shaped_signal, Fs, title = title)
 
-    if quantizerEn:
+    if quantizer_En:
         ### Quantizer
         quantized_signal, scaling_factor_dac = channel_funcs.quantizer(shaped_signal, resolution = dac_bits)
     else:
         quantized_signal = shaped_signal
-    if up_down_convEn:    
+    if up_down_conv_En:    
         ### Upconversion
         passband_signal = channel_funcs.upconversion(quantized_signal, Fs = Fs, Fc = Fc)
         title = 'Passband signal spectrum'
         channel_funcs.spectrum_plot(signal = passband_signal, Fs = Fs, title = title)
         ### AWGN
-        #passband_signal = awgn(passband_signal, snr_dB = snr_db)
+        passband_signal = awgn(passband_signal, snr_dB = snr_db)
         ### Downconversion
         baseband_signal = channel_funcs.downconversion(passband_signal, Fs = Fs, Fc = Fc, B = 1200)
         title = 'Baseband (shifted back) signal spectrum'
@@ -64,7 +64,7 @@ def main():
     else:
         baseband_signal = shaped_signal
 
-    if ADCEn:
+    if ADC_En:
         ### ADC
         scaled_signal, sacling_factor_adc = channel_funcs.ADC(baseband_signal, adc_bits=adc_bits, dac_bits=dac_bits)
     else:
@@ -101,7 +101,7 @@ def main():
     downsampled_signal /= (scaling_factor_dac * sacling_factor_adc)
     
     ### NMSE calculation
-    nmse = 20 * np.log10(np.sum((np.abs(downsampled_signal - signal)) ** 2) / np.sum(np.abs(signal) ** 2))
+    nmse = 10 * np.log10(np.sum((np.abs(downsampled_signal - signal)) ** 2) / np.sum(np.abs(signal) ** 2))
     print(f'NMSE between the received and the transmitted signal: {nmse} db')
     ### Demapping
     demodulated_bits = qam.demodulate(downsampled_signal, 'hard') 
