@@ -178,7 +178,6 @@ def main():
         plt.title("Train and test loss")
         plt.savefig(f"train_and_test_loss_num_epoch_{num_epochs}.png")
         plt.show()
-    temp = 0
 
 
 if __name__ == "__main__":
