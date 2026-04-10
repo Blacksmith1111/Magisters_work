@@ -4,17 +4,18 @@ from commpy.filters import rrcosfilter
 from scipy import signal as sig
 
 
-def spectrum_plot(signal: np.ndarray, Fs: float, title: str) -> None:
+def spectrum_plot(signal: np.ndarray, Fs: float, title: str, plt_en: bool = 0) -> None:
     spectrum = np.fft.fftshift(np.fft.fft(signal))
     freqs = np.fft.fftshift(np.fft.fftfreq(len(signal), 1 / Fs))
 
-    plt.figure(figsize=(10, 4))
-    plt.plot(freqs, 20 * np.log10(np.abs(spectrum) + 1e-15))
-    plt.xlabel("Frequency [Hz]")
-    plt.ylabel("Magnitude [dB]")
-    plt.grid(True)
-    plt.title(title)
-    plt.show()
+    if plt_en:
+        plt.figure(figsize=(10, 4))
+        plt.plot(freqs, 20 * np.log10(np.abs(spectrum) + 1e-15))
+        plt.xlabel("Frequency [Hz]")
+        plt.ylabel("Magnitude [dB]")
+        plt.grid(True)
+        plt.title(title)
+        plt.show()
 
 
 def constellation_plot(modulated_signal: np.ndarray, mod_order: int) -> None:
@@ -61,19 +62,29 @@ def ber_calc(initial_bits: np.ndarray, final_bits: np.ndarray) -> float:
     return np.sum(np.logical_xor(final_bits, initial_bits)) / len(initial_bits)
 
 
-def INL(full_scale: np.ndarray) -> np.ndarray:
-    inl_vals = 2 * np.sin(
-        2 * np.pi * (full_scale - full_scale[0]) / (len(full_scale))
-    )  # was 0.8
-    plt.figure(figsize=(8, 3))
-    plt.plot(inl_vals)
-    plt.title("INL values")
-    plt.grid(True)
-    plt.show()
+def INL(full_scale: np.ndarray, lsb_amplitude: float, plt_en: bool = 0) -> np.ndarray:
+
+    inl_vals = (
+        1.42
+        * lsb_amplitude
+        * np.sin(2 * np.pi * (full_scale - full_scale[0]) / len(full_scale))
+    )
+
+    if plt_en:
+        plt.figure(figsize=(8, 3))
+        plt.plot(full_scale, inl_vals)
+        plt.xlabel("DAC Input Code")
+        plt.ylabel("INL (LSB)")
+        plt.title(f"INL Profile (Max = {lsb_amplitude} LSB)")
+        plt.grid(True)
+        plt.show()
+
     return inl_vals
 
 
-def quantizer(signal: np.ndarray, resolution: int, INL_en: int = 1):
+def quantizer(
+    signal: np.ndarray, resolution: int, INL_en: int = 1, lsb_amplitude: float = 2.0
+):
     dac_rng = np.arange(-(2**resolution) / 2, 2**resolution / 2, 1)
     scaling_factor_dac = max(np.max(np.abs(signal.real)), np.max(np.abs(signal.imag)))
 
@@ -92,7 +103,7 @@ def quantizer(signal: np.ndarray, resolution: int, INL_en: int = 1):
 
     # INL adding
     if INL_en:
-        inl_vals = INL(dac_rng)
+        inl_vals = INL(dac_rng, lsb_amplitude=lsb_amplitude)
         i_quantized += inl_vals[i_indices]
         q_quantized += inl_vals[q_indices]
 
@@ -125,3 +136,10 @@ def downconversion(
         spectrum_plot(mixed, Fs, title="After LPF test")
 
     return mixed
+
+
+def qam_constellation_rms_calc(mod_order):
+    axis_vals_num = np.sqrt(mod_order)
+    vals = np.arange(-2 * axis_vals_num / 2 + 1, 2 * axis_vals_num / 2 + 1, 2)
+    rms = np.sqrt(np.mean(vals**2) * 2)
+    return rms
