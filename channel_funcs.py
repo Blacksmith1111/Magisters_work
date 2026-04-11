@@ -63,7 +63,7 @@ def ber_calc(initial_bits: np.ndarray, final_bits: np.ndarray) -> float:
 
 
 def INL(full_scale: np.ndarray, lsb_amplitude: float, plt_en: bool = 0) -> np.ndarray:
-
+    # 1.42
     inl_vals = (
         1.42
         * lsb_amplitude
@@ -110,9 +110,21 @@ def quantizer(
     return i_quantized + 1j * q_quantized, scaling_factor_dac
 
 
-def ADC(signal: np.ndarray, adc_bits: int, dac_bits: int):
+def ADC1(signal: np.ndarray, adc_bits: int, dac_bits: int):
     scaling_factor_adc = 2 ** (adc_bits - dac_bits)
     return signal * scaling_factor_adc, scaling_factor_adc
+
+
+def ADC(signal: np.ndarray, adc_bits: int, dac_bits: int):
+    scaling_factor_adc = 2 ** (adc_bits - dac_bits)
+    scaled_signal = signal * scaling_factor_adc
+
+    quantized_signal = np.round(scaled_signal)
+
+    limit = 2 ** (adc_bits - 1)
+    final_signal = np.clip(quantized_signal, -limit, limit - 1)
+
+    return final_signal, scaling_factor_adc
 
 
 def upconversion(baseband_signal: np.ndarray, Fc: float, Fs: float) -> np.ndarray:
