@@ -4,166 +4,295 @@ import commpy.modulation as mod
 from scipy import signal as sig
 from commpy.channels import awgn
 import channel_funcs as cf
-from dataclasses import dataclass
-from model import MLP_model
-import torch
 
 
-model = MLP_model.to("cuda:0")
-weights_file = "qam_64_mlp_weights.pt"
+def time_syncronization(base_signal, delayed_signal):
+    correlation = sig.correlate(base_signal, delayed_signal, mode = "full")
+    lags = sig.correlation_lags(len(base_signal), len(delayed_signal), mode = "full")
+    actual_delay = lags[np.argmax(correlation)]
+    print(f"Calculated delay (in samples): {actual_delay}")
+    recovered_signal = delayed_signal[-actual_delay: -actual_delay + len(base_signal)]
+    return recovered_signal
+
+def nmse_calc(signal_1, signal_2):
+    nmse = 10 * np.log10(np.sum(np.abs(signal_1 - signal_2) ** 2) / np.sum(np.abs(signal_1) ** 2))
+    return nmse
+
+def nmse_calc_absolute(signal_1, signal_2):
+    nmse = np.sum(np.abs(signal_1 - signal_2) ** 2) / np.sum(np.abs(signal_1) ** 2)
+    return nmse
+
+def rms_calc(signal):
+    return np.sqrt(np.mean(np.abs(signal)**2))
+
+def constellation_normalization(signal, mod_order):
+    '''
+    Normalizes the signal to rms = constellation rms
+    '''
+    constellation_rms = cf.qam_constellation_rms_calc(mod_order)
+    signal = signal / rms_calc(signal) *  constellation_rms
+    return signal
+
+def normalize_energy(s):
+    return s / np.sqrt(np.sum(np.abs(s)**2))
 
 
-@dataclass
-class SimConfig:
-    bits_num: int = 1_000_002
-    mod_order: int = 64
-    fs: float = 10e3
-    sps: int = 10
-    rolloff: float = 0.25
-    filter_span: int = 10
-    dac_bits: int = 5
-    adc_bits: int = 8
+def main():
+    # Parameters
+    BITS_NUM = 1_000_002
+    MOD_ORDER = 64
+    F_SYM = 10e3 #FS / SPS
+    FS = 10e3 # for SPS = 1 !!!
+    FC = FS / 4
+    SPS = 4
+    #F_SYM = FS / SPS
+    TS = 1 / F_SYM
+    ROLLOFF = 0.125
+    FILTER_SPAN = 64
+    DAC_BITS = 6
+    ADC_BITS = 8
+    SNR_DB = 15
 
-    en_adc: int = 1
-    en_quantizer: int = 1
-    en_up_down_conv: int = 1
-    en_noise: int = 1
-    inl_en: int = 1
-    lsb_ampl: float = 2.0
+    # Flags
+    EN_ADC = 1
+    EN_QUANTIZER = 1
+    EN_UP_DOWN_CONV = 1
+    EN_NOISE = 0
 
-    @property
-    def fc(self) -> float:
-        return self.fs / 4
-
-    @property
-    def ts(self) -> float:
-        return 1 / (self.fs / self.sps)
-
-
-def apply_model(model, input_signal, weights_file, batch_size=100000, device="cuda:0"):
-
-    is_complex = np.iscomplexobj(input_signal)
-    if is_complex:
-        signal_2d = np.column_stack((input_signal.real, input_signal.imag))
-    else:
-        signal_2d = input_signal
-
-    output_signal = np.zeros_like(signal_2d)
-    weights = torch.load(
-        "qam_64_mlp_weights.pt", map_location=device, weights_only=True
-    )
-    model.load_state_dict(weights)
-    model.eval()
-    with torch.no_grad():
-        for i in range(0, len(signal_2d), batch_size):
-            batch = signal_2d[i : i + batch_size]
-            tensor_in = torch.from_numpy(batch).float().to(device)
-            tensor_out = model(tensor_in)
-            output_signal[i : i + batch_size] = tensor_out.cpu().numpy()
-
-    if is_complex:
-        return output_signal[:, 0] + 1j * output_signal[:, 1]
-    return output_signal
-
-
-def run_transmitter(
-    bits: np.ndarray, qam: mod.QAMModem, cfg: SimConfig, model_en: bool = False
-):
+    # Transmitter (TX)
+    np.random.seed(100)
+    bits = np.random.randint(0, 2, BITS_NUM)
+    qam = mod.QAMModem(MOD_ORDER)
+    
+    
+    ######### 1 Symbols creating
+    test_freq = 200 # Гц
+    n_test = np.arange(BITS_NUM // 6) # количество символов
+    # Создаем "медленную" синусоиду вместо случайных символов
+    #symbol_signal = np.exp(1j * 2 * np.pi * test_freq / F_SYM * n_test)
     symbol_signal = qam.modulate(bits)
-    up_signal = cf.upsample(symbol_signal, cfg.sps)
+    ### Symbols spectrum check
+    cf.spectrum_plot(symbol_signal, Fs = FS, title = 'Signal spectrum, 1 SPS', plt_en = 1)
+    ###
 
+
+
+    ######### 2 Upsampling
+    up_signal = cf.upsample(symbol_signal, SPS)
+    ### Upsampled signal spectrum check
+    cf.spectrum_plot(up_signal, Fs = SPS * FS, title = 'Signal spectrum, 4 SPS', plt_en = 1)
+    ###
+    
+    
+
+    ######### 3 TX Pulse shaping
     shaped_signal = cf.pulse_shaping(
         up_signal,
-        rolloff=cfg.rolloff,
-        filter_span=cfg.filter_span,
-        sps=cfg.sps,
-        Fs=cfg.fs,
-        Ts=cfg.ts,
+        rolloff=ROLLOFF,
+        filter_span=FILTER_SPAN,
+        sps=SPS,
+        Fs=FS * SPS,
+        Ts=TS,
         normaliztion="L2",
+        plt_en = 1
     )
-    ### Adding the model
-    if model_en:
-        constellation_rms = cf.qam_constellation_rms_calc(cfg.mod_order)
-        temp1 = np.sqrt(np.mean(np.abs(shaped_signal) ** 2))
-        shaped_signal = (
-            shaped_signal
-            / np.sqrt(np.mean(np.abs(shaped_signal) ** 2))
-            * constellation_rms
-        )
-        shaped_signal = (
-            apply_model(
-                model=model, input_signal=shaped_signal, weights_file=weights_file
-            )
-            / constellation_rms
-            * temp1
-        )
-    """### Data preparing
-    constellation_rms = cf.qam_constellation_rms_calc(cfg.mod_order)
-    shaped_signal_norm = (
-        shaped_signal / np.sqrt(np.mean(np.abs(shaped_signal) ** 2)) * constellation_rms
+
+    ### Shaped signal spectrum check
+    cf.spectrum_plot(shaped_signal, Fs = SPS * FS, title = 'Spectrum after the pulse shaping', plt_en = 1)
+    ###
+
+    ### TX Pulse shaping block check, NMSE = -67 dB
+    '''shaped_back_signal = cf.pulse_shaping(
+        shaped_signal,
+        rolloff=ROLLOFF,
+        filter_span=FILTER_SPAN,
+        sps=SPS,
+        Fs=FS * SPS,
+        Ts=TS,
+        normaliztion="L2",
+        plt_en = 1
     )
-    targets = np.column_stack((shaped_signal_norm.real, shaped_signal_norm.imag))
-    np.save("targets_64_qam.npy", targets.astype(np.float64))"""
-    return symbol_signal, up_signal, shaped_signal
+    recovered = time_syncronization(up_signal, shaped_back_signal) 
+    downsampled = cf.downsample(recovered, SPS)
+    recovered = cf.upsample(downsampled, SPS)
+    nmse = nmse_calc(up_signal, recovered) 
+    
+    print(f'NMSE = {nmse} dB')
+    plt.figure(100)
+    plt.plot(up_signal.real[:100], color  = 'red', label = 'Up signal real part')
+    plt.plot(recovered.real[:100], color = 'green', label = 'Shaped back signal real part')
+    plt.legend()
+    plt.grid()
+    plt.show()
+
+    plt.figure(101)
+    plt.plot(up_signal.imag[:100], color  = 'red', label = 'Up signal imag part')
+    plt.plot(recovered.imag[:100], color = 'green', label = 'Shaped back signal imag part')
+    plt.legend()
+    plt.grid()
+    plt.show()'''
+    ###
 
 
-def apply_hardware_and_channel(shaped_signal: np.ndarray, snr_db: int, cfg: SimConfig):
-    # Quantizer
-    if cfg.en_quantizer:
-        quantized_signal, _ = cf.quantizer(
-            shaped_signal,
-            resolution=cfg.dac_bits,
-            INL_en=cfg.inl_en,
-            lsb_amplitude=cfg.lsb_ampl,
-        )
+
+    ######### DAC w/o the distortions
+    shaped_upsampled = cf.upsample(shaped_signal, sps = 10)
+    
+    ### Shaped signal spectrum check
+    SPS_2 = 40
+    cf.spectrum_plot(shaped_upsampled, Fs = SPS_2 * FS, title = 'Spectrum after the pulse shaping and upsampling, 40 SPS', plt_en = 1)
+    ###
+    
+    ### Add a LPF to shaped_upsampled
+    #shaped_upsampled_filtered = cf.apply_lowpass_filter(shaped_upsampled, FS/2*(1 + ROLLOFF) * 1.5, FS/2*(1 + ROLLOFF) * 2, FS * SPS * 10, 60)
+    shaped_upsampled_filtered = cf.apply_fixed_lpf(shaped_upsampled, FS / 2 * (1 + ROLLOFF) * 1.5, FS * SPS_2)
+    #shaped_upsampled_filtered = shaped_upsampled
+    ### Shaped upsampled and filtered through LPF signal spectrum check
+    cf.spectrum_plot(shaped_upsampled_filtered, Fs = SPS_2 * FS, title = 'Spectrum after the pulse shaping and upsampling to 40 SPS, then adding a LPF', plt_en = 1)
+    ###
+
+
+
+
+    ######## Upconversion
+    passband_signal = cf.upconversion(shaped_upsampled_filtered, Fc = FS * 10, Fs = FS * SPS_2)
+
+    ######## Downconversion
+
+
+    ######### ADC w/o distortions
+    ### Correlation between the shaped_upsampled and shaped_upsampled_filtered
+    recovered = time_syncronization(shaped_upsampled, shaped_upsampled_filtered)
+    downsampled = cf.downsample(recovered, 10)
+    recovered = cf.upsample(downsampled, 10)
+
+    ### Shaped signal and signal after the LPF normalization
+    #shaped_upsampled = constellation_normalization(shaped_upsampled, MOD_ORDER)
+    #recovered = constellation_normalization(recovered, MOD_ORDER)
+    #shaped_rms, recovered_rms = rms_calc(shaped_upsampled), rms_calc(recovered)
+    #print(shaped_rms, recovered_rms)
+    shaped_up_energy, recovered_energy = np.sum(np.abs(shaped_upsampled)** 2), np.sum(np.abs(recovered) ** 2)
+    print(f'Signals energies: {shaped_up_energy}; {recovered_energy}')
+    shaped_upsampled, recovered = normalize_energy(shaped_upsampled), normalize_energy(recovered)
+    shaped_up_energy, recovered_energy = np.sum(np.abs(shaped_upsampled)** 2), np.sum(np.abs(recovered) ** 2)
+    print(f'Signals energies: {shaped_up_energy}; {recovered_energy}')
+    
+    nmse = nmse_calc(shaped_upsampled, recovered)
+    nmse_abs = nmse_calc_absolute(shaped_upsampled, recovered)
+    print(f'NMSE = {nmse} dB')
+    print(f'NMSE absolute = {nmse_abs}')
+
+    mid = len(recovered) // 2
+    plt.figure(100)
+    plt.plot(shaped_upsampled.real[mid : mid + 100], color  = 'red', label = 'Up signal real part')
+    plt.plot(recovered.real[mid : mid + 100], color = 'green', label = 'Shaped back signal real part')
+    plt.legend()
+    plt.grid()
+    plt.show()
+
+    plt.figure(101)
+    plt.plot(shaped_upsampled.imag[mid : mid + 100], color  = 'red', label = 'Up signal imag part')
+    plt.plot(recovered.imag[mid : mid + 100], color = 'green', label = 'Shaped back signal imag part')
+    plt.legend()
+    plt.grid()
+    plt.show()
+    ###
+
+
+
+
+    ######## Matched filter to the downsampled signal
+    downsampled_shaped = cf.pulse_shaping(downsampled, ROLLOFF, FILTER_SPAN, SPS, TS, FS * SPS, plt_en = 1)
+    
+    ### Correlation between the up_signal and downsampled matched filtered
+    recovered = time_syncronization(up_signal, downsampled_shaped)
+    downsampled = cf.downsample(recovered, SPS)
+    recovered = cf.upsample(downsampled, SPS)
+    recovered, up_signal = normalize_energy(recovered), normalize_energy(up_signal)
+    recovered_energy, up_signal_energy = np.sum(np.abs(recovered)** 2), np.sum(np.abs(up_signal)** 2)
+    print(f'Signals energies: {recovered_energy}; {up_signal_energy}')
+
+    mid = len(recovered) // 2
+    plt.figure(100)
+    plt.plot(up_signal.real[mid : mid + 100], color  = 'red', label = 'Up signal real part')
+    plt.plot(recovered.real[mid : mid + 100], color = 'green', label = 'Shaped back signal real part')
+    plt.legend()
+    plt.grid()
+    plt.show()
+
+    plt.figure(101)
+    plt.plot(up_signal.imag[mid : mid + 100], color  = 'red', label = 'Up signal imag part')
+    plt.plot(recovered.imag[mid : mid + 100], color = 'green', label = 'Shaped back signal imag part')
+    plt.legend()
+    plt.grid()
+    plt.show()
+
+    nmse = nmse_calc(up_signal, recovered)
+    print(f'NMSE = {nmse} dB')
+    
+
+
+    ######## Downsampling to SPS = 1
+    final_symbols = cf.downsample(recovered, SPS)
+    final_symbols = constellation_normalization(final_symbols, MOD_ORDER)
+    final_symbols_rms, symbol_signal_rms =  rms_calc(final_symbols), rms_calc(symbol_signal) 
+    nmse = nmse_calc(symbol_signal, final_symbols)
+    print(f'NMSE = {nmse}')
+    
+
+
+
+    ####### Demapping
+    demodulated_bits = qam.demodulate(final_symbols, "hard")
+    ber = cf.ber_calc(bits, demodulated_bits)
+    print(f'BER = {ber}')
+    ###
+    cf.spectrum_plot(shaped_signal, FS, title="Original baseband signal spectrum")
+    # DAC / Quantizer
+    if EN_QUANTIZER:
+        quantized_signal, scale_dac = cf.quantizer(shaped_signal, resolution=DAC_BITS)
     else:
         quantized_signal = shaped_signal
+        scale_dac = 1.0
 
-    if cfg.en_up_down_conv:
+    # Channel and RF
+    if EN_UP_DOWN_CONV:
         # Upconversion
-        passband_signal = cf.upconversion(quantized_signal, Fs=cfg.fs, Fc=cfg.fc)
+        passband_signal = cf.upconversion(quantized_signal, Fs=FS, Fc=FC)
+        cf.spectrum_plot(passband_signal, FS, title="Passband signal spectrum")
 
         # AWGN
-        noisy_signal = (
-            awgn(passband_signal, snr_dB=snr_db) if cfg.en_noise else passband_signal
-        )
+        if EN_NOISE:
+            noisy_signal = awgn(passband_signal, snr_dB=SNR_DB)
+        else:
+            noisy_signal = passband_signal
 
         # Downconversion
-        baseband_signal = cf.downconversion(noisy_signal, Fs=cfg.fs, Fc=cfg.fc, B=1200)
-    else:
-        baseband_signal = (
-            awgn(quantized_signal, snr_dB=snr_db) if cfg.en_noise else quantized_signal
+        baseband_signal = cf.downconversion(noisy_signal, Fs=FS, Fc=FC, B=1200)
+        cf.spectrum_plot(
+            baseband_signal, FS, title="Baseband (shifted back) signal spectrum"
         )
+    else:
+        baseband_signal = shaped_signal
 
-    return baseband_signal
-
-
-def run_receiver(baseband_signal: np.ndarray, up_signal: np.ndarray, cfg: SimConfig):
+    # Receiver (RX) ---
     # ADC
-    if cfg.en_adc:
-        scaled_signal, _ = cf.ADC(
-            baseband_signal, adc_bits=cfg.adc_bits, dac_bits=cfg.dac_bits
+    if EN_ADC:
+        scaled_signal, scale_adc = cf.ADC(
+            baseband_signal, adc_bits=ADC_BITS, dac_bits=DAC_BITS
         )
     else:
         scaled_signal = baseband_signal
+        scale_adc = 1.0
 
-    ### Data preparing
-    """constellation_rms = cf.qam_constellation_rms_calc(cfg.mod_order)
-    scaled_signal_norm = (
-        scaled_signal / np.sqrt(np.mean(np.abs(scaled_signal) ** 2)) * constellation_rms
-    )
-    
-    objects = np.column_stack((scaled_signal_norm.real, scaled_signal_norm.imag))
-    np.save("objects_64_qam.npy", objects.astype(np.float64))
-    ###"""
     # Matched Filter
     recovered_signal = cf.pulse_shaping(
         scaled_signal,
-        rolloff=cfg.rolloff,
-        filter_span=cfg.filter_span,
-        sps=cfg.sps,
-        Fs=cfg.fs,
-        Ts=cfg.ts,
+        rolloff=ROLLOFF,
+        filter_span=FILTER_SPAN,
+        sps=SPS,
+        Fs=FS,
+        Ts=TS,
         normaliztion="L2",
     )
 
@@ -171,81 +300,35 @@ def run_receiver(baseband_signal: np.ndarray, up_signal: np.ndarray, cfg: SimCon
     correlation = sig.correlate(up_signal, recovered_signal, mode="full")
     lags = sig.correlation_lags(len(up_signal), len(recovered_signal), mode="full")
     actual_delay = lags[np.argmax(correlation)]
-    print(f"Calculated delay is {actual_delay}")
+    print(f"Calculated delay (in samples): {actual_delay}")
+
     rec_sync = recovered_signal[-actual_delay : -actual_delay + len(up_signal)]
 
     # Downsampling & Rescaling
-    downsampled = cf.downsample(rec_sync, cfg.sps)
+    downsampled = cf.downsample(rec_sync, SPS)
+    downsampled /= scale_dac * scale_adc
 
-    constellation_rms = cf.qam_constellation_rms_calc(cfg.mod_order)
-
-    downsampled_norm = (
-        downsampled / np.sqrt(np.mean(np.abs(downsampled) ** 2)) * constellation_rms
-    )
-
-    return downsampled_norm
-
-
-def calculate_metrics(
-    downsampled_norm: np.ndarray,
-    symbol_signal: np.ndarray,
-    bits: np.ndarray,
-    qam: mod.QAMModem,
-    bits_num: int,
-):
-
+    # Metrics and results
+    # NMSE
     nmse = 10 * np.log10(
-        np.sum(np.abs(downsampled_norm - symbol_signal) ** 2)
+        np.sum(np.abs(downsampled - symbol_signal) ** 2)
         / np.sum(np.abs(symbol_signal) ** 2)
     )
 
-    demod_bits = qam.demodulate(downsampled_norm, "hard")[:bits_num]
+    # Demapping
+    demod_bits = qam.demodulate(downsampled, "hard")
     ber = cf.ber_calc(bits, demod_bits)
 
-    return nmse, ber
+    print("-" * 30)
+    print(f"NMSE: {nmse:.2f} dB")
+    print(f"BER:  {ber * 100:.2f} %")
+    print("-" * 30)
 
-
-def main():
-    cfg = SimConfig()
-    SNR_vals, BER_vals = [], []
-
-    # TX
-    np.random.seed(100)
-    bits = np.random.randint(0, 2, cfg.bits_num)
-    qam = mod.QAMModem(cfg.mod_order)
-    model_en = 1
-    symbol_signal, up_signal, shaped_signal = run_transmitter(
-        bits, qam, cfg, model_en=model_en
-    )
-
-    for snr in range(15, 25, 1):
-        SNR_vals.append(snr)
-
-        # Channel
-        baseband_signal = apply_hardware_and_channel(shaped_signal, snr, cfg)
-        # RX
-        downsampled_norm = run_receiver(baseband_signal, up_signal, cfg)
-
-        # Metrics calculation
-        nmse, ber = calculate_metrics(
-            downsampled_norm, symbol_signal, bits, qam, cfg.bits_num
-        )
-        BER_vals.append(ber)
-
-        print("-" * 30)
-        print(f"SNR:  {snr} dB")
-        print(f"NMSE: {nmse:.2f} dB")
-        print(f"BER:  {ber:.9f} ")
-        print("-" * 30)
-
-    plt.figure(figsize=(8, 5))
-    plt.plot(SNR_vals, BER_vals, marker="o", linestyle="-", color="b")
-    plt.yscale("log")
-    plt.grid(True, which="both", ls="--")
-    plt.title(f"BER vs SNR (INL: {bool(cfg.inl_en)}, 64-QAM)")
-    plt.xlabel("SNR [dB]")
-    plt.ylabel("BER")
-    plt.savefig(f"With_INL_model_enable_{model_en}.png")
+    # Final results plot
+    plt.figure(figsize=(10, 4))
+    plt.stem(rec_sync.real[:100])
+    plt.title("Shifted recovered signal (fragment)")
+    plt.grid(True)
     plt.show()
 
 

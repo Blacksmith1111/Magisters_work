@@ -1,8 +1,66 @@
 import numpy as np
 import matplotlib.pyplot as plt
-from commpy.filters import rrcosfilter
+from commpy.filters import rrcosfilter, rcosfilter
 from scipy import signal as sig
 
+
+def rc_filter(signal, filter_span, sps, Fs, rolloff, Ts, plt_en = 1, normalization = 'L2'):
+    filter_len = filter_span * sps# + 1
+    time_stamps, h = rcosfilter(filter_len, alpha=rolloff, Ts=Ts, Fs=Fs)
+
+    if normalization == "L2":
+        h = h / np.sqrt(np.sum(np.abs(h)**2))
+    else:
+        h = h / np.sum(h)
+    
+    if plt_en:
+        plt.figure(1)
+        plt.title('RC filter impulse response')
+        plt.stem(time_stamps, h, label = 'Impulse response')
+        plt.legend()
+        plt.grid()
+        plt.show()
+        plt.close('all')
+
+        spectrum_plot(h, Fs, 'RC filter, h spectrum', plt_en = 1)
+    
+
+    return np.convolve(signal, h, mode="full")
+    
+def apply_fixed_lpf(signal, cutoff_hz, fs, N=401):
+    # Прямое создание фильтра без автоматического подбора порядка
+    taps = sig.firwin(N, cutoff_hz, window=('kaiser', 14), fs=fs)
+    return np.convolve(signal, taps, mode="full")
+
+def apply_lowpass_filter(signal, f_pass, f_stop, fs, attenuation_db=60):
+    """
+    Создает ФНЧ с заданным подавлением и переходной полосой.
+    f_pass: частота, до которой коэффициент передачи = 1 (Гц)
+    f_stop: частота, с которой начинается подавление (Гц)
+    fs: частота дискретизации (Гц)
+    attenuation_db: требуемое подавление в полосе заграждения (дБ)
+    """
+    # 1. Ширина переходной полосы в нормированных единицах (0..1, где 1 - частота Найквиста)
+    nyq = fs / 2
+    width = (f_stop - f_pass) / nyq
+    
+    # 2. Определение порядка фильтра (N) и параметра бета для окна Кайзера
+    # Позволяет получить заданное подавление при заданной ширине перехода
+    N, beta = sig.kaiserord(attenuation_db, width)
+    
+    # Делаем N нечетным для удобства (симметричный FIR фильтр)
+    if N % 2 == 0:
+        N += 1
+        
+    # 3. Расчет коэффициентов (taps) фильтра
+    # Частота среза берется как середина переходной полосы
+    cutoff = (f_pass + f_stop) / 2
+    taps = sig.firwin(N, cutoff, window=('kaiser', beta), fs=fs)
+    spectrum_plot(taps, fs, title = "LPF for upsampled", plt_en = 1)
+    filtered = np.convolve(signal, taps, mode="full")
+    spectrum_plot(filtered, fs, title = "Upsampled shaped after LPF", plt_en = 1)
+    
+    return filtered
 
 def spectrum_plot(signal: np.ndarray, Fs: float, title: str, plt_en: bool = 0) -> None:
     spectrum = np.fft.fftshift(np.fft.fft(signal))
@@ -13,6 +71,8 @@ def spectrum_plot(signal: np.ndarray, Fs: float, title: str, plt_en: bool = 0) -
         plt.plot(freqs, 20 * np.log10(np.abs(spectrum) + 1e-15))
         plt.xlabel("Frequency [Hz]")
         plt.ylabel("Magnitude [dB]")
+        plt.axvline(x = Fs / 2, color = 'red')
+        plt.axvline(x = -Fs / 2, color = 'red')
         plt.grid(True)
         plt.title(title)
         plt.show()
@@ -46,12 +106,23 @@ def pulse_shaping(
     Ts: float,
     Fs: float,
     normaliztion: str = "L2",
+    plt_en:bool = 0
 ) -> np.ndarray:
-    filter_len = filter_span * sps + 1
+    filter_len = filter_span * sps# + 1
     time_stamps, h = rrcosfilter(filter_len, alpha=rolloff, Ts=Ts, Fs=Fs)
 
+    if plt_en:
+        plt.figure(1)
+        plt.title('RRC filter impulse response')
+        plt.stem(time_stamps, h, label = 'Impulse response')
+        plt.legend()
+        plt.grid()
+        plt.show()
+        plt.close('all')
+
     if normaliztion == "L2":
-        h = h / np.sqrt(np.sum(h**2))
+        #h = h / np.sqrt(np.sum(h**2))
+        h = h / np.sqrt(np.sum(np.abs(h)**2))
     else:
         h = h / np.sum(h)
 
@@ -127,9 +198,13 @@ def ADC(signal: np.ndarray, adc_bits: int, dac_bits: int):
     return final_signal, scaling_factor_adc
 
 
-def upconversion(baseband_signal: np.ndarray, Fc: float, Fs: float) -> np.ndarray:
+def upconversion(baseband_signal: np.ndarray, Fc: float, Fs: float, plt_en : bool = 1) -> np.ndarray:
     t = np.arange(len(baseband_signal)) / Fs
-    return baseband_signal * np.exp(2j * np.pi * Fc * t)
+    passband_signal = baseband_signal * np.exp(2j * np.pi * Fc * t)
+    if plt_en:
+        spectrum_plot(baseband_signal, Fs = Fs, title = 'Baseband signal spectrum', plt_en = 1)
+        spectrum_plot(passband_signal, Fs = Fs, title = 'Passband signal spectrum', plt_en = 1)
+    return passband_signal
 
 
 def downconversion(
