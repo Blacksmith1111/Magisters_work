@@ -27,40 +27,11 @@ def rc_filter(signal, filter_span, sps, Fs, rolloff, Ts, plt_en = 1, normalizati
 
     return np.convolve(signal, h, mode="full")
     
-def apply_fixed_lpf(signal, cutoff_hz, fs, N=401):
-    # Прямое создание фильтра без автоматического подбора порядка
+def apply_fixed_lpf(signal, cutoff_hz, fs, N=401, plt_en = 0):
     taps = sig.firwin(N, cutoff_hz, window=('kaiser', 14), fs=fs)
+    if plt_en:
+        spectrum_plot(taps, fs, title = 'LPF frequency characteristics', plt_en = plt_en)
     return np.convolve(signal, taps, mode="full")
-
-def apply_lowpass_filter(signal, f_pass, f_stop, fs, attenuation_db=60):
-    """
-    Создает ФНЧ с заданным подавлением и переходной полосой.
-    f_pass: частота, до которой коэффициент передачи = 1 (Гц)
-    f_stop: частота, с которой начинается подавление (Гц)
-    fs: частота дискретизации (Гц)
-    attenuation_db: требуемое подавление в полосе заграждения (дБ)
-    """
-    # 1. Ширина переходной полосы в нормированных единицах (0..1, где 1 - частота Найквиста)
-    nyq = fs / 2
-    width = (f_stop - f_pass) / nyq
-    
-    # 2. Определение порядка фильтра (N) и параметра бета для окна Кайзера
-    # Позволяет получить заданное подавление при заданной ширине перехода
-    N, beta = sig.kaiserord(attenuation_db, width)
-    
-    # Делаем N нечетным для удобства (симметричный FIR фильтр)
-    if N % 2 == 0:
-        N += 1
-        
-    # 3. Расчет коэффициентов (taps) фильтра
-    # Частота среза берется как середина переходной полосы
-    cutoff = (f_pass + f_stop) / 2
-    taps = sig.firwin(N, cutoff, window=('kaiser', beta), fs=fs)
-    spectrum_plot(taps, fs, title = "LPF for upsampled", plt_en = 1)
-    filtered = np.convolve(signal, taps, mode="full")
-    spectrum_plot(filtered, fs, title = "Upsampled shaped after LPF", plt_en = 1)
-    
-    return filtered
 
 def spectrum_plot(signal: np.ndarray, Fs: float, title: str, plt_en: bool = 0) -> None:
     spectrum = np.fft.fftshift(np.fft.fft(signal))
@@ -153,32 +124,14 @@ def INL(full_scale: np.ndarray, lsb_amplitude: float, plt_en: bool = 0) -> np.nd
     return inl_vals
 
 
-def quantizer(
-    signal: np.ndarray, resolution: int, INL_en: int = 1, lsb_amplitude: float = 2.0
-):
-    dac_rng = np.arange(-(2**resolution) / 2, 2**resolution / 2, 1)
-    scaling_factor_dac = max(np.max(np.abs(signal.real)), np.max(np.abs(signal.imag)))
+def quantizer(signal: np.ndarray, resolution: int, gain: float):
 
-    signal_normalized = signal * scaling_factor_dac
+    left_border, right_border = int(-(2**resolution) / 2), int(2**resolution / 2 - 1)
+    scaled_signal = signal * gain
+    i_quantized, q_quantized = np.clip(np.round((scaled_signal.real)).astype(np.int32), left_border, right_border), np.clip(np.round((scaled_signal.imag)).astype(np.int32), left_border, right_border)
+    
 
-    # Searching fot the nearest level
-    i_indices = np.argmin(
-        np.abs(signal_normalized.real[:, None] - dac_rng[None, :]), axis=1
-    )
-    q_indices = np.argmin(
-        np.abs(signal_normalized.imag[:, None] - dac_rng[None, :]), axis=1
-    )
-
-    i_quantized = dac_rng[i_indices]
-    q_quantized = dac_rng[q_indices]
-
-    # INL adding
-    if INL_en:
-        inl_vals = INL(dac_rng, lsb_amplitude=lsb_amplitude)
-        i_quantized += inl_vals[i_indices]
-        q_quantized += inl_vals[q_indices]
-
-    return i_quantized + 1j * q_quantized, scaling_factor_dac
+    return i_quantized + 1j * q_quantized
 
 
 def ADC1(signal: np.ndarray, adc_bits: int, dac_bits: int):
@@ -207,22 +160,13 @@ def upconversion(baseband_signal: np.ndarray, Fc: float, Fs: float, plt_en : boo
     return passband_signal
 
 
-def downconversion(
-    passband_signal: np.ndarray, Fc: float, Fs: float, B: float, filterEn: bool = True
-) -> np.ndarray:
+def downconversion(passband_signal: np.ndarray, Fc: float, Fs: float, plt_en: bool = 1) -> np.ndarray:
     t = np.arange(len(passband_signal)) / Fs
-    mixed = passband_signal * np.exp(-2j * np.pi * Fc * t)
+    baseband_signal = passband_signal * np.exp(-2j * np.pi * Fc * t)
+    if plt_en:
+        spectrum_plot(baseband_signal, Fs = Fs, title = 'Downconverted baseband signal spectrum', plt_en = plt_en)
 
-    if filterEn:
-        lpf_len = 65
-        fc_lpf = B / 2 * 1.1
-        lpf_h = sig.firwin(lpf_len, fc_lpf / (Fs / 2), pass_zero="lowpass")
-
-        spectrum_plot(lpf_h, Fs, title="Test LPF")
-        mixed = np.convolve(mixed, lpf_h, mode="full")
-        spectrum_plot(mixed, Fs, title="After LPF test")
-
-    return mixed
+    return baseband_signal
 
 
 def qam_constellation_rms_calc(mod_order):

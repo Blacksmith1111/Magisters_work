@@ -37,6 +37,7 @@ def normalize_energy(s):
     return s / np.sqrt(np.sum(np.abs(s)**2))
 
 
+
 def main():
     # Parameters
     BITS_NUM = 1_000_002
@@ -135,117 +136,141 @@ def main():
 
 
 
-    ######### DAC w/o the distortions
-    shaped_upsampled = cf.upsample(shaped_signal, sps = 10)
+    ######### DAC with the distortions
+    gains = np.linspace(0.1, 10, 50)
+    bers = np.zeros_like(gains)
+    shaped_signal_pure = shaped_signal.copy()
+    for i in range(len(gains)):
+        #shaped_signal = cf.quantizer(shaped_signal, resolution = 5, gain = gains[i]) ### Add the quantizer
+        #shaped_upsampled = cf.upsample(shaped_signal, sps = 10)
+        current_shaped = cf.quantizer(shaped_signal_pure, resolution = 5, gain = gains[i]) 
     
-    ### Shaped signal spectrum check
-    SPS_2 = 40
-    cf.spectrum_plot(shaped_upsampled, Fs = SPS_2 * FS, title = 'Spectrum after the pulse shaping and upsampling, 40 SPS', plt_en = 1)
-    ###
+        if np.sum(np.abs(current_shaped)) == 0:
+            bers[i] = 0.5
+            continue
+            
+        shaped_upsampled = cf.upsample(current_shaped, sps = 10)
+
+
+        ### Shaped signal spectrum check
+        SPS_2 = 40
+        cf.spectrum_plot(shaped_upsampled, Fs = SPS_2 * FS, title = 'Spectrum after the pulse shaping and upsampling, 40 SPS', plt_en = 0)
+        ###
+        
+        ### Add a LPF to shaped_upsampled
+        #shaped_upsampled_filtered = cf.apply_lowpass_filter(shaped_upsampled, FS/2*(1 + ROLLOFF) * 1.5, FS/2*(1 + ROLLOFF) * 2, FS * SPS * 10, 60)
+        shaped_upsampled_filtered = cf.apply_fixed_lpf(shaped_upsampled, FS / 2 * (1 + ROLLOFF) * 1.5, FS * SPS_2)
+        #shaped_upsampled_filtered = shaped_upsampled
+        ### Shaped upsampled and filtered through LPF signal spectrum check
+        cf.spectrum_plot(shaped_upsampled_filtered, Fs = SPS_2 * FS, title = 'Spectrum after the pulse shaping and upsampling to 40 SPS, then adding a LPF', plt_en = 0)
+        ###
+
+
+
+
+        ######## Upconversion
+        passband_signal = cf.upconversion(shaped_upsampled_filtered, Fc = FS * 10, Fs = FS * SPS_2, plt_en = 0)
+
+        ######## Downconversion
+        baseband_signal = cf.downconversion(passband_signal, Fc = FS * 10, Fs = FS * SPS_2, plt_en = 0)
+
+        ######### ADC w/o distortions
+        ### Correlation between the shaped_upsampled and shaped_upsampled_filtered
+        recovered = time_syncronization(shaped_upsampled, shaped_upsampled_filtered)
+        downsampled = cf.downsample(recovered, 10)
+        recovered = cf.upsample(downsampled, 10)
+
+        ### Shaped signal and signal after the LPF normalization
+        shaped_up_energy, recovered_energy = np.sum(np.abs(shaped_upsampled)** 2), np.sum(np.abs(recovered) ** 2)
+        print(f'Signals energies: {shaped_up_energy}; {recovered_energy}')
+        shaped_upsampled, recovered = normalize_energy(shaped_upsampled), normalize_energy(recovered)
+        shaped_up_energy, recovered_energy = np.sum(np.abs(shaped_upsampled)** 2), np.sum(np.abs(recovered) ** 2)
+        print(f'Signals energies: {shaped_up_energy}; {recovered_energy}')
+        
+        nmse = nmse_calc(shaped_upsampled, recovered)
+        nmse_abs = nmse_calc_absolute(shaped_upsampled, recovered)
+        print(f'NMSE = {nmse} dB')
+        print(f'NMSE absolute = {nmse_abs}')
+
+        '''mid = len(recovered) // 2
+        plt.figure(100)
+        plt.stem(shaped_upsampled.real[mid : mid + 100], linefmt='r-', label = 'Upsampled signal before the LPF real part')
+        plt.stem(recovered.real[mid : mid + 100],linefmt='g-', label = 'Upsampled signal after the LPF real part')
+        plt.legend()
+        plt.title('Signals 10 SPS')
+        plt.grid()
+        plt.show()
+
+        plt.figure(101)
+        plt.stem(shaped_upsampled.imag[mid : mid + 100], linefmt='r-', label = 'Upsampled signal before the LPF imag part')
+        plt.stem(recovered.imag[mid : mid + 100], linefmt='g-', label = 'Upsampled signal after the LPF imag part')
+        plt.legend()
+        plt.title('Signals 10 SPS')
+        plt.grid()
+        plt.show()'''
+        ###
+
+
+
+
+        ######## Matched filter to the downsampled signal
+        downsampled_shaped = cf.pulse_shaping(downsampled, ROLLOFF, FILTER_SPAN, SPS, TS, FS * SPS, plt_en = 0)
+        
+        ### Correlation between the up_signal and downsampled matched filtered
+        recovered = time_syncronization(up_signal, downsampled_shaped)
+        downsampled = cf.downsample(recovered, SPS)
+        recovered = cf.upsample(downsampled, SPS)
+        recovered, up_signal = normalize_energy(recovered), normalize_energy(up_signal)
+        recovered_energy, up_signal_energy = np.sum(np.abs(recovered)** 2), np.sum(np.abs(up_signal)** 2)
+        print(f'Signals energies: {recovered_energy}; {up_signal_energy}')
+
+        '''mid = len(recovered) // 2
+        plt.figure(100)
+        plt.stem(up_signal.real[mid : mid + 100], linefmt='r-', label = 'Signal on 4 SPS after initial shaping real part')
+        plt.stem(recovered.real[mid : mid + 100], linefmt='g-', label = 'Signal on 4 SPS after matched filtering real part')
+        plt.legend()
+        plt.title('Signals on 4 SPS')
+        plt.grid()
+        plt.show()
+
+        plt.figure(101)
+        plt.stem(up_signal.imag[mid : mid + 100], linefmt='r-', label = 'Signal on 4 SPS after initial shaping imag part')
+        plt.stem(recovered.imag[mid : mid + 100], linefmt='g-', label = 'Signal on 4 SPS after matched filtering imag part')
+        plt.legend()
+        plt.title('Signals on 4 SPS')
+        plt.grid()
+        plt.show()'''
+
+        nmse = nmse_calc(up_signal, recovered)
+        print(f'NMSE = {nmse} dB')
+        
+
+
+        ######## Downsampling to SPS = 1
+        final_symbols = cf.downsample(recovered, SPS)
+        final_symbols = constellation_normalization(final_symbols, MOD_ORDER)
+        final_symbols_rms, symbol_signal_rms =  rms_calc(final_symbols), rms_calc(symbol_signal) 
+        nmse = nmse_calc(symbol_signal, final_symbols)
+        print(f'NMSE = {nmse}')
+        
+
+
+
+        ####### Demapping
+        demodulated_bits = qam.demodulate(final_symbols, "hard")
+        ber = cf.ber_calc(bits, demodulated_bits)
+        print(f'BER = {ber}')
+        bers[i] = ber
     
-    ### Add a LPF to shaped_upsampled
-    #shaped_upsampled_filtered = cf.apply_lowpass_filter(shaped_upsampled, FS/2*(1 + ROLLOFF) * 1.5, FS/2*(1 + ROLLOFF) * 2, FS * SPS * 10, 60)
-    shaped_upsampled_filtered = cf.apply_fixed_lpf(shaped_upsampled, FS / 2 * (1 + ROLLOFF) * 1.5, FS * SPS_2)
-    #shaped_upsampled_filtered = shaped_upsampled
-    ### Shaped upsampled and filtered through LPF signal spectrum check
-    cf.spectrum_plot(shaped_upsampled_filtered, Fs = SPS_2 * FS, title = 'Spectrum after the pulse shaping and upsampling to 40 SPS, then adding a LPF', plt_en = 1)
-    ###
-
-
-
-
-    ######## Upconversion
-    passband_signal = cf.upconversion(shaped_upsampled_filtered, Fc = FS * 10, Fs = FS * SPS_2)
-
-    ######## Downconversion
-
-
-    ######### ADC w/o distortions
-    ### Correlation between the shaped_upsampled and shaped_upsampled_filtered
-    recovered = time_syncronization(shaped_upsampled, shaped_upsampled_filtered)
-    downsampled = cf.downsample(recovered, 10)
-    recovered = cf.upsample(downsampled, 10)
-
-    ### Shaped signal and signal after the LPF normalization
-    #shaped_upsampled = constellation_normalization(shaped_upsampled, MOD_ORDER)
-    #recovered = constellation_normalization(recovered, MOD_ORDER)
-    #shaped_rms, recovered_rms = rms_calc(shaped_upsampled), rms_calc(recovered)
-    #print(shaped_rms, recovered_rms)
-    shaped_up_energy, recovered_energy = np.sum(np.abs(shaped_upsampled)** 2), np.sum(np.abs(recovered) ** 2)
-    print(f'Signals energies: {shaped_up_energy}; {recovered_energy}')
-    shaped_upsampled, recovered = normalize_energy(shaped_upsampled), normalize_energy(recovered)
-    shaped_up_energy, recovered_energy = np.sum(np.abs(shaped_upsampled)** 2), np.sum(np.abs(recovered) ** 2)
-    print(f'Signals energies: {shaped_up_energy}; {recovered_energy}')
-    
-    nmse = nmse_calc(shaped_upsampled, recovered)
-    nmse_abs = nmse_calc_absolute(shaped_upsampled, recovered)
-    print(f'NMSE = {nmse} dB')
-    print(f'NMSE absolute = {nmse_abs}')
-
-    mid = len(recovered) // 2
-    plt.figure(100)
-    plt.plot(shaped_upsampled.real[mid : mid + 100], color  = 'red', label = 'Up signal real part')
-    plt.plot(recovered.real[mid : mid + 100], color = 'green', label = 'Shaped back signal real part')
-    plt.legend()
+    ### Ber (gain)
+    plt.figure(1)
+    plt.plot(gains, bers)
+    plt.ylabel('BER')
+    plt.xlabel('Gain')
+    plt.title('Quantizer BER(Gain)')
     plt.grid()
+    plt.savefig('quantizer_ber_gain.png')
     plt.show()
-
-    plt.figure(101)
-    plt.plot(shaped_upsampled.imag[mid : mid + 100], color  = 'red', label = 'Up signal imag part')
-    plt.plot(recovered.imag[mid : mid + 100], color = 'green', label = 'Shaped back signal imag part')
-    plt.legend()
-    plt.grid()
-    plt.show()
-    ###
-
-
-
-
-    ######## Matched filter to the downsampled signal
-    downsampled_shaped = cf.pulse_shaping(downsampled, ROLLOFF, FILTER_SPAN, SPS, TS, FS * SPS, plt_en = 1)
-    
-    ### Correlation between the up_signal and downsampled matched filtered
-    recovered = time_syncronization(up_signal, downsampled_shaped)
-    downsampled = cf.downsample(recovered, SPS)
-    recovered = cf.upsample(downsampled, SPS)
-    recovered, up_signal = normalize_energy(recovered), normalize_energy(up_signal)
-    recovered_energy, up_signal_energy = np.sum(np.abs(recovered)** 2), np.sum(np.abs(up_signal)** 2)
-    print(f'Signals energies: {recovered_energy}; {up_signal_energy}')
-
-    mid = len(recovered) // 2
-    plt.figure(100)
-    plt.plot(up_signal.real[mid : mid + 100], color  = 'red', label = 'Up signal real part')
-    plt.plot(recovered.real[mid : mid + 100], color = 'green', label = 'Shaped back signal real part')
-    plt.legend()
-    plt.grid()
-    plt.show()
-
-    plt.figure(101)
-    plt.plot(up_signal.imag[mid : mid + 100], color  = 'red', label = 'Up signal imag part')
-    plt.plot(recovered.imag[mid : mid + 100], color = 'green', label = 'Shaped back signal imag part')
-    plt.legend()
-    plt.grid()
-    plt.show()
-
-    nmse = nmse_calc(up_signal, recovered)
-    print(f'NMSE = {nmse} dB')
-    
-
-
-    ######## Downsampling to SPS = 1
-    final_symbols = cf.downsample(recovered, SPS)
-    final_symbols = constellation_normalization(final_symbols, MOD_ORDER)
-    final_symbols_rms, symbol_signal_rms =  rms_calc(final_symbols), rms_calc(symbol_signal) 
-    nmse = nmse_calc(symbol_signal, final_symbols)
-    print(f'NMSE = {nmse}')
-    
-
-
-
-    ####### Demapping
-    demodulated_bits = qam.demodulate(final_symbols, "hard")
-    ber = cf.ber_calc(bits, demodulated_bits)
-    print(f'BER = {ber}')
     ###
     cf.spectrum_plot(shaped_signal, FS, title="Original baseband signal spectrum")
     # DAC / Quantizer
