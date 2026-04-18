@@ -29,6 +29,7 @@ def rc_filter(signal, filter_span, sps, Fs, rolloff, Ts, plt_en = 1, normalizati
     
 def apply_fixed_lpf(signal, cutoff_hz, fs, N=401, plt_en = 0):
     taps = sig.firwin(N, cutoff_hz, window=('kaiser', 14), fs=fs)
+    taps = taps / np.sqrt(np.sum(np.abs(taps)**2))
     if plt_en:
         spectrum_plot(taps, fs, title = 'LPF frequency characteristics', plt_en = plt_en)
     return np.convolve(signal, taps, mode="full")
@@ -139,16 +140,11 @@ def ADC1(signal: np.ndarray, adc_bits: int, dac_bits: int):
     return signal * scaling_factor_adc, scaling_factor_adc
 
 
-def ADC(signal: np.ndarray, adc_bits: int, dac_bits: int):
-    scaling_factor_adc = 2 ** (adc_bits - dac_bits)
-    scaled_signal = signal * scaling_factor_adc
-
-    quantized_signal = np.round(scaled_signal)
-
-    limit = 2 ** (adc_bits - 1)
-    final_signal = np.clip(quantized_signal, -limit, limit - 1)
-
-    return final_signal, scaling_factor_adc
+def ADC(signal: np.ndarray, resolution: int, gain: float):
+    left_border, right_border = int(-(2**resolution) / 2), int(2**resolution / 2 - 1)
+    scaled_signal = signal * gain
+    i_quantized, q_quantized = np.clip(np.round((scaled_signal.real)).astype(np.int32), left_border, right_border), np.clip(np.round((scaled_signal.imag)).astype(np.int32), left_border, right_border)
+    return i_quantized + 1j * q_quantized
 
 
 def upconversion(baseband_signal: np.ndarray, Fc: float, Fs: float, plt_en : bool = 1) -> np.ndarray:
