@@ -107,11 +107,7 @@ def ber_calc(initial_bits: np.ndarray, final_bits: np.ndarray) -> float:
 
 def INL(full_scale: np.ndarray, lsb_amplitude: float, plt_en: bool = 0) -> np.ndarray:
     # 1.42
-    inl_vals = (
-        1.42
-        * lsb_amplitude
-        * np.sin(2 * np.pi * (full_scale - full_scale[0]) / len(full_scale))
-    )
+    inl_vals = lsb_amplitude * np.sin(2 * np.pi * (full_scale - full_scale[0]) / len(full_scale))
 
     if plt_en:
         plt.figure(figsize=(8, 3))
@@ -125,12 +121,23 @@ def INL(full_scale: np.ndarray, lsb_amplitude: float, plt_en: bool = 0) -> np.nd
     return inl_vals
 
 
-def quantizer(signal: np.ndarray, resolution: int, gain: float):
+def quantizer(signal: np.ndarray, resolution: int, gain: float, inl_en: bool = 0):
 
     left_border, right_border = int(-(2**resolution) / 2), int(2**resolution / 2 - 1)
     scaled_signal = signal * gain
-    i_quantized, q_quantized = np.clip(np.round((scaled_signal.real)).astype(np.int32), left_border, right_border), np.clip(np.round((scaled_signal.imag)).astype(np.int32), left_border, right_border)
+    i_quantized = np.clip(np.round((scaled_signal.real)).astype(np.int32), left_border, right_border)
+    q_quantized = np.clip(np.round((scaled_signal.imag)).astype(np.int32), left_border, right_border)
     
+    if inl_en:
+        full_scale = np.arange(left_border, right_border + 1, 1)
+        inl_array = INL(full_scale, lsb_amplitude=2, plt_en=0)
+        i_indices = i_quantized - left_border
+        q_indices = q_quantized - left_border
+        
+        i_with_inl = i_quantized.astype(np.float64) + inl_array[i_indices]
+        q_with_inl = q_quantized.astype(np.float64) + inl_array[q_indices]
+        
+        return i_with_inl + 1j * q_with_inl
 
     return i_quantized + 1j * q_quantized
 
