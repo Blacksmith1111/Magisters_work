@@ -146,11 +146,12 @@ def test(model, test_data, criterion_test):
     return avg_test_loss, np.concatenate(preds, axis=0), np.concatenate(targets, axis=0)
 
 
-def main():
-    TRAIN_EN = 0
+def main(train_en = 0):
     batch_size = 8192
-    objects = np.load("objects_64_qam.npy")[:200000]
-    targets = np.load("targets_64_qam.npy")[:200000]
+    objects = np.load("model_objects_64_qam.npy")[:100000]
+    targets = np.load("model_targets_64_qam.npy")[:100000]
+    objects = np.column_stack((objects.real, objects.imag))
+    targets = np.column_stack((targets.real, targets.imag))
     train_dataloader, test_dataloader = data_prepare(
         objects,
         targets,
@@ -167,7 +168,7 @@ def main():
         optimizer, mode="min", factor=0.1, patience=30
     )
 
-    if TRAIN_EN:
+    if train_en:
         model, train_loss_avg_arr, test_loss_avg_arr = train(
             model,
             train_dataloader=train_dataloader,
@@ -202,4 +203,5 @@ def main():
 
 
 if __name__ == "__main__":
-    main()
+    TRAIN_EN = 0
+    main(train_en = TRAIN_EN)

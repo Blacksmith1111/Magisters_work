@@ -5,6 +5,7 @@ from scipy import signal as sig
 from commpy.channels import awgn
 import channel_funcs as cf
 from tqdm import tqdm
+from model import MLP_model
 
 
 def time_syncronization(base_signal, delayed_signal):
@@ -80,7 +81,7 @@ def pulse_shaping_check(shaped_signal, up_signal, ROLLOFF, FILTER_SPAN, SPS, FS,
     title = 'Signal 4 SPS before the pulse shaping; Signal 4 SPS after the matched filtering'
     compare_2_signals(up_signal, recovered, title)
 
-def generate_tx_base(bits_num, mod_order, sps, rolloff, filter_span, fs, ts, debug_check = 1):
+def generate_tx_base(bits_num, mod_order, sps, rolloff, filter_span, fs, ts, debug_check = 1, data_save = 0):
     np.random.seed(100)
     bits = np.random.randint(0, 2, bits_num)
     qam = mod.QAMModem(mod_order)
@@ -102,6 +103,9 @@ def generate_tx_base(bits_num, mod_order, sps, rolloff, filter_span, fs, ts, deb
         plt_en=0
     )
 
+    if data_save:
+        normalized_shaped = normalize_energy(shaped_signal)
+        np.save('model_targets_64_qam.npy', normalized_shaped)
     ### Shaped signal spectrum check
     cf.spectrum_plot(shaped_signal, Fs = sps * fs, title = 'Spectrum after the pulse shaping', plt_en = debug_check)
     ###
@@ -112,19 +116,27 @@ def generate_tx_base(bits_num, mod_order, sps, rolloff, filter_span, fs, ts, deb
     return bits, qam, symbol_signal, up_signal, shaped_signal
 
 def simulate_channel_and_rx(bits, qam, shaped_signal_pure, up_signal, symbol_signal, 
-                            snr_arr, inl_en, dac_gain, adc_gain, sps, sps_2, fs, rolloff, filter_span, ts, mod_order, noise_en = 1, debug_check = 1):
+                            snr_arr, inl_en, dac_gain, adc_gain, sps, sps_2, fs, rolloff,
+                            filter_span, ts, mod_order, noise_en = 1, debug_check = 1, data_save = 0):
     
     bers = np.zeros_like(snr_arr, dtype=np.float64)
     nmse_final_arr = np.zeros_like(bers)
     
-    for i in tqdm(range(len(snr_arr)), desc=f"Simulating INL_EN = {inl_en}"):
+    for i in tqdm(range(len(snr_arr)), desc = f"Simulating INL_EN = {inl_en}"):
         ######### DAC with the distortions
         current_shaped = cf.quantizer(shaped_signal_pure, resolution = 5, gain=dac_gain, inl_en = inl_en) 
         
-        if np.sum(np.abs(current_shaped)) == 0:
+        '''if np.sum(np.abs(current_shaped)) == 0:
             bers[i] = 0.5
-            continue
-            
+            continue'''
+        # TODO add a normalization when saving the data
+        if data_save:
+            print('Data saving mode')
+            ### ADC quantizer
+            model_objects = cf.quantizer(current_shaped, resolution = 8, gain = adc_gain)
+            model_objects = normalize_energy(model_objects)
+            np.save('model_objects_64_qam.npy', model_objects)
+
         ### Upsampling to 40 SPS
         shaped_upsampled = cf.upsample(current_shaped, sps=sps_2)
         ### Shaped signal spectrum check
@@ -199,7 +211,7 @@ def simulate_channel_and_rx(bits, qam, shaped_signal_pure, up_signal, symbol_sig
 
 def main():
     # Parameters
-    BITS_NUM = 6_000_000 #1_000_002
+    BITS_NUM = 360_000 #6_000_000 #1_000_002
     MOD_ORDER = 64
     F_SYM = 10e3 #FS / SPS
     FS = 10e3 # for SPS = 1 !!!
@@ -210,24 +222,26 @@ def main():
     FILTER_SPAN = 64
     DAC_GAIN = 2.928
     ADC_GAIN = 14
+    DATA_SAVE = 1
 
 
     bits, qam, symbol_signal, up_signal, shaped_signal = generate_tx_base(bits_num = BITS_NUM, mod_order = MOD_ORDER, sps = SPS,
-            rolloff = ROLLOFF, filter_span = FILTER_SPAN, fs = FS, ts = TS)
+            rolloff = ROLLOFF, filter_span = FILTER_SPAN, fs = FS, ts = TS, debug_check = 0, data_save = 1)
 
     snr_arr = np.arange(10, 11, 1)
     shaped_signal_pure = shaped_signal.copy()
+    ### Simulation with INL
+    bers_with_inl, nmse_final_arr_with_inl = simulate_channel_and_rx(bits, qam, shaped_signal_pure, up_signal, symbol_signal, 
+        snr_arr, inl_en = 1, dac_gain = DAC_GAIN, adc_gain = ADC_GAIN, sps = SPS, sps_2 = SPS_2, fs = FS,
+        rolloff = ROLLOFF, filter_span = FILTER_SPAN,
+        ts = TS, mod_order = MOD_ORDER, debug_check = 0, noise_en = 1, data_save = DATA_SAVE)
+    
     ### Simulation without INL
     bers_no_inl, nmse_final_arr_no_inl = simulate_channel_and_rx(bits, qam, shaped_signal, up_signal, symbol_signal, 
         snr_arr, inl_en = 0, dac_gain = DAC_GAIN, adc_gain = ADC_GAIN, sps = SPS, sps_2 = SPS_2, fs = FS,
         rolloff = ROLLOFF, filter_span = FILTER_SPAN,
         ts = TS, mod_order = MOD_ORDER, debug_check = 1, noise_en = 1)
     
-    ### Simulation with INL
-    bers_with_inl, nmse_final_arr_with_inl = simulate_channel_and_rx(bits, qam, shaped_signal_pure, up_signal, symbol_signal, 
-        snr_arr, inl_en = 1, dac_gain = DAC_GAIN, adc_gain = ADC_GAIN, sps = SPS, sps_2 = SPS_2, fs = FS,
-        rolloff = ROLLOFF, filter_span = FILTER_SPAN,
-        ts = TS, mod_order = MOD_ORDER, debug_check = 0, noise_en = 1)
     
     plt.figure(10)
     plt.plot(snr_arr, bers_no_inl, marker = 'o', color = 'red', label = f'{MOD_ORDER} QAM, without INL')
