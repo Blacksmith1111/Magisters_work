@@ -50,13 +50,15 @@ def spectrum_plot(signal: np.ndarray, Fs: float, title: str, plt_en: bool = 0) -
         plt.show()
 
 
-def constellation_plot(modulated_signal: np.ndarray, mod_order: int) -> None:
+def constellation_plot(modulated_signal: np.ndarray, mod_order: int, title) -> None:
     plt.figure(figsize=(6, 6))
     plt.scatter(modulated_signal.real, modulated_signal.imag, s=5)
     plt.axhline(0, color="black", linestyle="--", linewidth=0.8)
     plt.axvline(0, color="black", linestyle="--", linewidth=0.8)
     plt.grid(True)
     plt.title(f"Constellation {mod_order} QAM")
+    if title is not None:
+        plt.savefig(title)
     plt.show()
 
 

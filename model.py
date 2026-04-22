@@ -12,26 +12,6 @@ import matplotlib.pyplot as plt
 
 DEVICE = "cuda:0" if torch.cuda.is_available() else "cpu"
 
-
-"""class MLP_model(nn.Module):
-    def __init__(self, in_features):
-        super().__init__()
-        self.fc1 = nn.Linear(in_features, 64 * in_features)
-        self.activation = nn.ReLU()
-        self.fc2 = nn.Linear(64 * in_features, 128 * in_features)
-        self.fc3 = nn.Linear(128 * in_features, 64 * in_features)
-        self.fc4 = nn.Linear(64 * in_features, 2)
-
-    def forward(self, x):
-        x = self.fc1(x)
-        x = self.activation(x)
-        x = self.fc2(x)
-        x = self.activation(x)
-        x = self.fc3(x)
-        x = self.activation(x)
-        x = self.fc4(x)
-        return x"""
-
 MLP_model = nn.Sequential(
     nn.Linear(2, 10),
     nn.Tanh(),
@@ -145,11 +125,26 @@ def test(model, test_data, criterion_test):
     avg_test_loss = total_loss_test / len(test_data)
     return avg_test_loss, np.concatenate(preds, axis=0), np.concatenate(targets, axis=0)
 
+def inference(signal, batch_size, model, device, weights_file):
+    
+    state_dict = torch.load(weights_file, weights_only=True)
+    model.load_state_dict(state_dict)
+    
+    model.eval()
+    data = np.column_stack((signal.real, signal.imag))
+    output = np.zeros_like(data)
+    with torch.no_grad():
+        for i in range(0, len(data), batch_size):
+            data_tensor = torch.from_numpy(data[i:i + batch_size]).float().to(device)
+            pred = model(data_tensor)
+            output[i:i + batch_size] = pred.cpu().numpy()
+    return output
+
 
 def main(train_en = 0):
     batch_size = 8192
-    objects = np.load("model_objects_64_qam.npy")[:100000]
-    targets = np.load("model_targets_64_qam.npy")[:100000]
+    objects = np.load("model_objects_64_qam.npy")[1000:1000 + 201000]
+    targets = np.load("model_targets_64_qam.npy")[1000:1000 + 201000]
     objects = np.column_stack((objects.real, objects.imag))
     targets = np.column_stack((targets.real, targets.imag))
     train_dataloader, test_dataloader = data_prepare(
@@ -162,7 +157,7 @@ def main(train_en = 0):
     # model = torch.compile(model)
     criterion = nn.MSELoss()
     lr = 3e-3
-    num_epochs = 700
+    num_epochs = 50
     optimizer = torch.optim.AdamW(model.parameters(), lr=lr)
     scheduler = torch.optim.lr_scheduler.ReduceLROnPlateau(
         optimizer, mode="min", factor=0.1, patience=30
