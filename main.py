@@ -5,7 +5,7 @@ from scipy import signal as sig
 from commpy.channels import awgn
 import channel_funcs as cf
 from tqdm import tqdm
-from model import MLP_model, inference
+from mlp_model import MLP_model, inference
 
 DEVICE = 'cuda:0'
 model = MLP_model.to(DEVICE)
@@ -110,19 +110,20 @@ def generate_tx_base(bits_num, mod_order, sps, rolloff, filter_span, fs, ts, deb
     )
 
     if model_apply:
-        #TODO Add the de-centering
         ### Model adding
+        mean_val = np.mean(shaped_signal)
+        shaped_signal -= mean_val
         shaped_rms = rms_calc(shaped_signal)
         shaped_normalized = shaped_signal / shaped_rms
-        shaped_signal = inference(shaped_normalized, batch_size = 100000, model = model, device = DEVICE, weights_file = WEIGHTS_FILE) * shaped_rms
-        shaped_energy = energy_calc(shaped_signal)
-        shaped_signal = shaped_signal[:, 0] + 1j * shaped_signal[:, 1]
+        prediction = inference(shaped_normalized, batch_size = len(shaped_normalized), model = model, device = DEVICE, weights_file = WEIGHTS_FILE) * shaped_rms
+        de_centered_signal = prediction + mean_val
+        #shaped_signal = prediction[:, 0] + 1j * prediction[:, 1]
+        shaped_signal = de_centered_signal[:, 0] + 1j * de_centered_signal[:, 1]
 
 
     if data_save:
         centered_shaped = shaped_signal - np.mean(shaped_signal)
         centered_shaped /= rms_calc(centered_shaped)
-        #normalized_shaped = normalize_energy(shaped_signal)
         np.save('model_targets_64_qam.npy', centered_shaped)
     ### Shaped signal spectrum check
     cf.spectrum_plot(shaped_signal, Fs = sps * fs, title = 'Spectrum after the pulse shaping', plt_en = debug_check)
@@ -142,7 +143,7 @@ def simulate_channel_and_rx(bits, qam, shaped_signal_pure, up_signal, symbol_sig
     
     for i in tqdm(range(len(snr_arr)), desc = f"Simulating INL_EN = {inl_en}"):
         ######### DAC with the distortions
-        current_shaped = cf.quantizer(shaped_signal_pure, resolution = 5, gain=dac_gain, inl_en = inl_en) 
+        current_shaped = cf.quantizer(shaped_signal_pure, resolution = 5, gain = dac_gain, inl_en = inl_en) 
         
         if data_save:
             print('Data saving mode')
@@ -227,7 +228,7 @@ def simulate_channel_and_rx(bits, qam, shaped_signal_pure, up_signal, symbol_sig
 
 def main():
     # Parameters
-    BITS_NUM = 6_000_000 #6_000_000 #1_000_002
+    BITS_NUM = 600_000 #6_000_000 #1_000_002
     MOD_ORDER = 64
     F_SYM = 10e3 #FS / SPS
     FS = 10e3 # for SPS = 1 !!!
@@ -245,7 +246,7 @@ def main():
     bits, qam, symbol_signal, up_signal, shaped_signal = generate_tx_base(bits_num = BITS_NUM, mod_order = MOD_ORDER, sps = SPS,
             rolloff = ROLLOFF, filter_span = FILTER_SPAN, fs = FS, ts = TS, debug_check = DEBUG_CHECK, data_save = DATA_SAVE, model_apply = 0)
 
-    snr_arr = np.arange(10, 30, 1)
+    snr_arr = np.arange(10, 20, 1)
     shaped_signal_pure = shaped_signal.copy()
 
     ### Simulation with INL
