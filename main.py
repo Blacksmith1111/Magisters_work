@@ -8,11 +8,26 @@ from tqdm import tqdm
 from mlp_model import MLP_model, inference
 from efficient_kan_model import inference_kan, KAN_model
 
+
 DEVICE = 'cuda:0'
 model_mlp = MLP_model.to(DEVICE)
 model_kan = KAN_model.to(DEVICE)
-WEIGHTS_FILE_MLP = 'qam_64_mlp_weights.pt'
-WEIGHTS_FILE_KAN = 'qam_64_kan_weights.pt'
+### 64 QAM weights
+WEIGHTS_FILE_64_QAM_MLP_2_LSB = 'qam_64_mlp_2_LSB_weights.pt'
+WEIGHTS_FILE_64_QAM_KAN_2_LSB = 'qam_64_kan_2_LSB_weights.pt'
+WEIGHTS_FILE_64_QAM_MLP_4_LSB = 'qam_64_mlp_4_LSB_weights.pt'
+WEIGHTS_FILE_64_QAM_KAN_4_LSB = 'qam_64_kan_4_lsb_weights.pt'
+### 32 QAM weights
+WEIGHTS_FILE_32_QAM_MLP_2_LSB = 0
+WEIGHTS_FILE_32_QAM_MLP_4_LSB = 0
+WEIGHTS_FILE_32_QAM_KAN_2_LSB = 0
+WEIGHTS_FILE_32_QAM_KAN_4_LSB = 0
+
+SIMULATION_WEIGHTS = {64:{'MLP':{2 : WEIGHTS_FILE_64_QAM_MLP_2_LSB, 4 : WEIGHTS_FILE_64_QAM_MLP_4_LSB}, 
+                          'KAN':{2 : WEIGHTS_FILE_64_QAM_KAN_2_LSB, 4 : WEIGHTS_FILE_64_QAM_KAN_4_LSB}},
+                        32:{'MLP':{2 : WEIGHTS_FILE_32_QAM_MLP_2_LSB, 4 : WEIGHTS_FILE_32_QAM_MLP_4_LSB}, 
+                          'KAN':{2 : WEIGHTS_FILE_32_QAM_KAN_2_LSB, 4 : WEIGHTS_FILE_32_QAM_KAN_4_LSB}}}
+
 
 def time_syncronization(base_signal, delayed_signal):
     correlation = sig.correlate(base_signal, delayed_signal, mode = "full")
@@ -90,9 +105,9 @@ def pulse_shaping_check(shaped_signal, up_signal, ROLLOFF, FILTER_SPAN, SPS, FS,
     title = 'Signal 4 SPS before the pulse shaping; Signal 4 SPS after the matched filtering'
     compare_2_signals(up_signal, recovered, title)
 
-def generate_tx_base(bits_num, mod_order, sps, rolloff, filter_span, fs, ts, debug_check = 1, data_save = 0, model_apply = 0):
-    np.random.seed(100)
-    #np.random.seed(1000)
+def generate_tx_base(bits_num, mod_order, sps, rolloff, filter_span, fs, ts, debug_check = 1, data_save = 0, model_apply = 0, inl_val = 2):
+    #np.random.seed(100)
+    np.random.seed(1000)
     bits = np.random.randint(0, 2, bits_num)
     qam = mod.QAMModem(mod_order)
     
@@ -114,26 +129,29 @@ def generate_tx_base(bits_num, mod_order, sps, rolloff, filter_span, fs, ts, deb
     )
 
     if model_apply:
-        ### Model adding
+        ### Model applying
         mean_val = np.mean(shaped_signal)
         shaped_signal -= mean_val
         shaped_rms = rms_calc(shaped_signal)
         shaped_normalized = shaped_signal / shaped_rms
         if model_apply == 1:
-            prediction = inference(shaped_normalized, batch_size = len(shaped_normalized), model = model_mlp, device = DEVICE, weights_file = WEIGHTS_FILE_MLP) 
+            prediction = inference(shaped_normalized,
+                batch_size = len(shaped_normalized),
+                model = model_mlp,
+                device = DEVICE,
+                weights_file = SIMULATION_WEIGHTS[mod_order]['MLP'][inl_val]) 
+            print(SIMULATION_WEIGHTS[mod_order]['MLP'][inl_val])
         else:
-            #prediction = inference_kan(shaped_normalized, batch_size = len(shaped_normalized), saving_file = WEIGHTS_FILE_KAN, device = DEVICE)
-            #prediction = inference_kan(shaped_normalized, batch_size = len(shaped_normalized), model = model_kan, device = DEVICE, weights_file = WEIGHTS_FILE_KAN)
             current_max = np.max(np.abs(shaped_normalized))
             prediction = inference_kan(
                 shaped_normalized, 
                 batch_size=8192, 
-                model=model_kan, 
-                device=DEVICE, 
-                weights_file=WEIGHTS_FILE_KAN,
-                max_val=current_max
+                model = model_kan, 
+                device = DEVICE, 
+                weights_file = SIMULATION_WEIGHTS[mod_order]['KAN'][inl_val],
+                max_val = current_max
             )
-        
+            print(SIMULATION_WEIGHTS[mod_order]['KAN'][inl_val])
         prediction *= shaped_rms # Switched back to the initial rms
         de_centered_signal = prediction + mean_val
         shaped_signal = de_centered_signal[:, 0] + 1j * de_centered_signal[:, 1]
@@ -246,7 +264,7 @@ def simulate_channel_and_rx(bits, qam, shaped_signal_pure, up_signal, symbol_sig
 
 def main():
     # Parameters
-    BITS_NUM = 6_000_000 #6_000_000 #1_000_002
+    BITS_NUM = 600_000 #6_000_000 #1_000_002
     MOD_ORDER = 64
     F_SYM = 10e3 #FS / SPS
     FS = 10e3 # for SPS = 1 !!!
@@ -257,7 +275,7 @@ def main():
     FILTER_SPAN = 64
     DAC_GAIN = 2.928
     ADC_GAIN = 14
-    DATA_SAVE = 1
+    DATA_SAVE = 0
     DEBUG_CHECK = 0
     INL_VAL = 4
 
@@ -265,7 +283,7 @@ def main():
     bits, qam, symbol_signal, up_signal, shaped_signal = generate_tx_base(bits_num = BITS_NUM, mod_order = MOD_ORDER, sps = SPS,
             rolloff = ROLLOFF, filter_span = FILTER_SPAN, fs = FS, ts = TS, debug_check = DEBUG_CHECK, data_save = DATA_SAVE, model_apply = 0)
 
-    snr_arr = np.arange(10, 11, 1)
+    snr_arr = np.arange(10, 22, 1)
     shaped_signal_pure = shaped_signal.copy()
 
     ### Simulation with INL
@@ -282,7 +300,7 @@ def main():
     
     ### With pre-distorter MLP
     bits, qam, symbol_signal, up_signal, shaped_signal = generate_tx_base(bits_num = BITS_NUM, mod_order = MOD_ORDER, sps = SPS,
-            rolloff = ROLLOFF, filter_span = FILTER_SPAN, fs = FS, ts = TS, debug_check = 0, data_save = DATA_SAVE, model_apply = 1)
+            rolloff = ROLLOFF, filter_span = FILTER_SPAN, fs = FS, ts = TS, debug_check = 0, data_save = DATA_SAVE, model_apply = 1, inl_val = INL_VAL)
     
     ### Simulation with INL and pre-distorter MLP
     bers_with_inl_predist, nmse_final_arr_with_inl_predist, final_symbols_with_inl_predist = simulate_channel_and_rx(bits, qam, shaped_signal, up_signal, symbol_signal, 
@@ -293,7 +311,7 @@ def main():
 
     ### With pre-distorter KAN
     bits, qam, symbol_signal, up_signal, shaped_signal = generate_tx_base(bits_num = BITS_NUM, mod_order = MOD_ORDER, sps = SPS,
-            rolloff = ROLLOFF, filter_span = FILTER_SPAN, fs = FS, ts = TS, debug_check = 0, data_save = DATA_SAVE, model_apply = 2)
+            rolloff = ROLLOFF, filter_span = FILTER_SPAN, fs = FS, ts = TS, debug_check = 0, data_save = DATA_SAVE, model_apply = 2, inl_val = INL_VAL)
     
     ### Simulation with INL and pre-distorter KAN
     bers_with_inl_predist_kan, nmse_final_arr_with_inl_predist_kan, final_symbols_with_inl_predist_kan = simulate_channel_and_rx(bits, qam, shaped_signal, up_signal, symbol_signal, 

@@ -139,14 +139,24 @@ def inference(signal, batch_size, model, device, weights_file):
     return output
 
 
-def main(train_en = 0):
+def main(train_en = 0, lsb = 2, mod_order = 64):
     batch_size = 8192
     trg_file_64_qam = 'model_targets_64_qam.npy'
     obj_file_64_qam_2_lsb = 'model_objects_64_qam_INL_2_LSB.npy'
     obj_file_64_qam_4_lsb = 'model_objects_64_qam_INL_4_LSB.npy'
 
-    objects = np.load(obj_file_64_qam_4_lsb)[1000:1000 + 201000]
-    targets = np.load(trg_file_64_qam)[1000:1000 + 201000]
+    if mod_order == 64:
+        if lsb == 2:
+            objects = np.load(obj_file_64_qam_2_lsb)[1000:1000 + 201000]
+            targets = np.load(trg_file_64_qam)[1000:1000 + 201000]
+            weights_file = "qam_64_mlp_2_LSB_weights.pt"
+        elif lsb == 4:
+            objects = np.load(obj_file_64_qam_4_lsb)[1000:1000 + 201000]
+            targets = np.load(trg_file_64_qam)[1000:1000 + 201000]
+            weights_file = "qam_64_mlp_4_LSB_weights.pt"
+
+    
+
     objects = np.column_stack((objects.real, objects.imag))
     targets = np.column_stack((targets.real, targets.imag))
 
@@ -162,12 +172,13 @@ def main(train_en = 0):
     # model = torch.compile(model)
     criterion = nn.MSELoss()
     lr = 3e-3
-    num_epochs = 30
+    num_epochs = 20
     optimizer = torch.optim.AdamW(model.parameters(), lr=lr)
     scheduler = torch.optim.lr_scheduler.ReduceLROnPlateau(
-        optimizer, mode="min", factor=0.1, patience=30
+        optimizer, mode="min", factor=0.1, patience=5
     )
 
+    
     if train_en:
         model, train_loss_avg_arr, test_loss_avg_arr = train(
             model,
@@ -180,7 +191,7 @@ def main(train_en = 0):
             scheduler=scheduler,
             device=DEVICE,
         )
-        weights_file = "qam_64_mlp_weights.pt"
+        
         torch.save(model.state_dict(), weights_file)
         plt.figure(0)
         plt.plot(train_loss_avg_arr, label="Train loss")
@@ -192,7 +203,7 @@ def main(train_en = 0):
         plt.show()
         
     else:
-        weights = torch.load("qam_64_mlp_weights.pt", map_location = DEVICE, weights_only = True)
+        weights = torch.load(weights_file, map_location = DEVICE, weights_only = True)
         model.load_state_dict(weights)
         criterion_test = nn.L1Loss()
         avg_test_loss, preds, targets = test(model, test_dataloader, criterion_test)
@@ -201,5 +212,7 @@ def main(train_en = 0):
 
 
 if __name__ == "__main__":
-    TRAIN_EN = 1
-    main(train_en = TRAIN_EN)
+    MOD_ORDER = 64
+    LSB = 4
+    TRAIN_EN = 0
+    main(train_en = TRAIN_EN, lsb = LSB, mod_order = MOD_ORDER)

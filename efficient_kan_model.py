@@ -113,10 +113,23 @@ def inference_kan(signal, batch_size, model, device, weights_file, window_size=W
     output = output_norm * max_val
     return output
 
-def main(train_en=0):
+def main(train_en = 0, lsb = 2, mod_order = 64):
     batch_size = 8192
     
     try:
+        trg_file_64_qam = 'model_targets_64_qam.npy'
+        obj_file_64_qam_2_lsb = 'model_objects_64_qam_INL_2_LSB.npy'
+        obj_file_64_qam_4_lsb = 'model_objects_64_qam_INL_4_LSB.npy'
+
+        if mod_order == 64:
+            if lsb == 2:
+                objects = np.load(obj_file_64_qam_2_lsb)[1000:1000 + 201000]
+                targets = np.load(trg_file_64_qam)[1000:1000 + 201000]
+                weights_file = "qam_64_kan_2_LSB_weights.pt"
+            elif lsb == 4:
+                objects = np.load(obj_file_64_qam_4_lsb)[1000:1000 + 201000]
+                targets = np.load(trg_file_64_qam)[1000:1000 + 201000]
+                weights_file = "qam_64_kan_4_LSB_weights.pt"
         objects = np.load("model_objects_64_qam.npy")[1000:1000 + 201000]
         targets = np.load("model_targets_64_qam.npy")[1000:1000 + 201000]
     except FileNotFoundError:
@@ -149,7 +162,7 @@ def main(train_en=0):
         optimizer, mode="min", factor=0.5, patience=10
     )
 
-    weights_file = "qam_64_kan_weights.pt"
+    #weights_file = "qam_64_kan_weights.pt"
 
     if train_en:
         model, train_loss_avg_arr, test_loss_avg_arr = train(
@@ -191,5 +204,7 @@ def main(train_en=0):
             print(f"Weights file {weights_file} not found")
 
 if __name__ == "__main__":
-    TRAIN_EN = 1 
-    main(train_en=TRAIN_EN)
+    TRAIN_EN = 0
+    MOD_ORDER = 64
+    LSB = 4
+    main(train_en = TRAIN_EN, lsb = LSB, mod_order = MOD_ORDER)
