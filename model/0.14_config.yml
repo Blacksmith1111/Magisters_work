@@ -3,7 +3,23 @@ auto_save: true
 base_fun_name: silu
 ckpt_path: ./model
 device: cuda:0
-grid: 15
+grid: !!python/object/apply:numpy._core.multiarray.scalar
+- !!python/object/apply:numpy.dtype
+  args:
+  - i8
+  - false
+  - true
+  state: !!python/tuple
+  - 3
+  - <
+  - null
+  - null
+  - null
+  - -1
+  - -1
+  - 0
+- !!binary |
+  HgAAAAAAAAA=
 grid_eps: 0.02
 grid_range:
 - -1

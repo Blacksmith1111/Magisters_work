@@ -5,6 +5,7 @@ from torch.utils.data import TensorDataset, DataLoader
 from sklearn.model_selection import train_test_split
 from tqdm import tqdm
 import matplotlib.pyplot as plt
+from channel_funcs import normalize_to_ones
 
 
 DEVICE = "cuda:0" if torch.cuda.is_available() else "cpu"
@@ -12,12 +13,12 @@ DEVICE = "cuda:0" if torch.cuda.is_available() else "cpu"
 MLP_model = nn.Sequential(
     nn.Linear(2, 10),
     nn.Tanh(),
-    #nn.Linear(10, 10),
-    #nn.Tanh(),
-    #nn.Linear(10, 10),
-    #nn.Tanh(),
-    #nn.Linear(10, 10),
-    #nn.Tanh(),
+    nn.Linear(10, 10),
+    nn.Tanh(),
+    nn.Linear(10, 10),
+    nn.Tanh(),
+    nn.Linear(10, 10),
+    nn.Tanh(),
     nn.Linear(10, 10),
     nn.Tanh(),
     nn.Linear(10, 2),
@@ -60,7 +61,7 @@ def data_prepare(objects, targets, batch_size=64):
     )
     test_dataloader = DataLoader(
         test_dataset,
-        batch_size=batch_size,
+        batch_size=len(test_dataset), # batch_size
         shuffle=False,
     )
     return train_dataloader, test_dataloader
@@ -140,15 +141,20 @@ def inference(signal, batch_size, model, device, weights_file):
 
 def main(train_en = 0):
     batch_size = 8192
-    objects = np.load("model_objects_64_qam.npy")[1000:1000 + 201000]
-    targets = np.load("model_targets_64_qam.npy")[1000:1000 + 201000]
+    trg_file_64_qam = 'model_targets_64_qam.npy'
+    obj_file_64_qam_2_lsb = 'model_objects_64_qam_INL_2_LSB.npy'
+    obj_file_64_qam_4_lsb = 'model_objects_64_qam_INL_4_LSB.npy'
+
+    objects = np.load(obj_file_64_qam_4_lsb)[1000:1000 + 201000]
+    targets = np.load(trg_file_64_qam)[1000:1000 + 201000]
     objects = np.column_stack((objects.real, objects.imag))
     targets = np.column_stack((targets.real, targets.imag))
-    train_dataloader, test_dataloader = data_prepare(
-        objects,
-        targets,
-        batch_size=batch_size,
-    )
+
+    initial_criterion_check = nn.L1Loss()
+    MAE_start = initial_criterion_check(torch.from_numpy(objects[:20100]).float(), torch.from_numpy(targets[:20100]).float())
+    print(f'Initial MAE: {MAE_start}')
+
+    train_dataloader, test_dataloader = data_prepare(objects, targets, batch_size = batch_size)
 
     model = MLP_model.to(DEVICE)
     total_params = sum(p.numel() for p in model.parameters())
@@ -192,9 +198,8 @@ def main(train_en = 0):
         avg_test_loss, preds, targets = test(model, test_dataloader, criterion_test)
         print(f"MAE on test is {avg_test_loss}")
         data_prepare(objects=preds, targets=targets)
-        temp = 0
 
 
 if __name__ == "__main__":
-    TRAIN_EN = 0
+    TRAIN_EN = 1
     main(train_en = TRAIN_EN)

@@ -4,7 +4,7 @@ from commpy.filters import rrcosfilter, rcosfilter
 from scipy import signal as sig
 
 
-def rc_filter(signal, filter_span, sps, Fs, rolloff, Ts, plt_en = 1, normalization = 'L2'):
+'''def rc_filter(signal, filter_span, sps, Fs, rolloff, Ts, plt_en = 1, normalization = 'L2'):
     filter_len = filter_span * sps# + 1
     time_stamps, h = rcosfilter(filter_len, alpha=rolloff, Ts=Ts, Fs=Fs)
 
@@ -25,7 +25,7 @@ def rc_filter(signal, filter_span, sps, Fs, rolloff, Ts, plt_en = 1, normalizati
         spectrum_plot(h, Fs, 'RC filter, h spectrum', plt_en = 1)
     
 
-    return np.convolve(signal, h, mode="full")
+    return np.convolve(signal, h, mode="full")'''
     
 def apply_fixed_lpf(signal, cutoff_hz, fs, N=401, plt_en = 0):
     taps = sig.firwin(N, cutoff_hz, window=('kaiser', 14), fs=fs)
@@ -50,15 +50,15 @@ def spectrum_plot(signal: np.ndarray, Fs: float, title: str, plt_en: bool = 0) -
         plt.show()
 
 
-def constellation_plot(modulated_signal: np.ndarray, mod_order: int, title) -> None:
+def constellation_plot(modulated_signal: np.ndarray, mod_order: int, title: str) -> None:
     plt.figure(figsize=(6, 6))
     plt.scatter(modulated_signal.real, modulated_signal.imag, s=5)
     plt.axhline(0, color="black", linestyle="--", linewidth=0.8)
     plt.axvline(0, color="black", linestyle="--", linewidth=0.8)
     plt.grid(True)
-    plt.title(f"Constellation {mod_order} QAM")
     if title is not None:
-        plt.savefig(title)
+        plt.title(title)
+    plt.savefig(f"Constellation_{mod_order}_QAM_{title}.png")
     plt.show()
 
 
@@ -123,16 +123,16 @@ def INL(full_scale: np.ndarray, lsb_amplitude: float, plt_en: bool = 0) -> np.nd
     return inl_vals
 
 
-def quantizer(signal: np.ndarray, resolution: int, gain: float, inl_en: bool = 0):
+def quantizer(signal: np.ndarray, resolution: int, gain: float, inl_en: int = 0):
 
     left_border, right_border = int(-(2**resolution) / 2), int(2**resolution / 2 - 1)
     scaled_signal = signal * gain
     i_quantized = np.clip(np.round((scaled_signal.real)).astype(np.int32), left_border, right_border)
     q_quantized = np.clip(np.round((scaled_signal.imag)).astype(np.int32), left_border, right_border)
     
-    if inl_en:
+    if inl_en > 0:
         full_scale = np.arange(left_border, right_border + 1, 1)
-        inl_array = INL(full_scale, lsb_amplitude=2, plt_en=0)
+        inl_array = INL(full_scale, lsb_amplitude = inl_en, plt_en=0)
         i_indices = i_quantized - left_border
         q_indices = q_quantized - left_border
         
@@ -142,12 +142,6 @@ def quantizer(signal: np.ndarray, resolution: int, gain: float, inl_en: bool = 0
         return i_with_inl + 1j * q_with_inl
 
     return i_quantized + 1j * q_quantized
-
-
-def ADC1(signal: np.ndarray, adc_bits: int, dac_bits: int):
-    scaling_factor_adc = 2 ** (adc_bits - dac_bits)
-    return signal * scaling_factor_adc, scaling_factor_adc
-
 
 def ADC(signal: np.ndarray, resolution: int, gain: float):
     left_border, right_border = int(-(2**resolution) / 2), int(2**resolution / 2 - 1)
@@ -179,3 +173,14 @@ def qam_constellation_rms_calc(mod_order):
     vals = np.arange(-2 * axis_vals_num / 2 + 1, 2 * axis_vals_num / 2 + 1, 2)
     rms = np.sqrt(np.mean(vals**2) * 2)
     return rms
+
+
+def normalize_to_ones(objects, targets):
+    norm_val = max(np.max(np.abs(objects)), np.max(np.abs(targets)))
+    objects = objects / norm_val
+    targets = targets / norm_val
+    return objects, targets, norm_val
+
+
+def denormalize_from_ones(objects_n, targets_n, norm_val):
+    return objects_n * norm_val, targets_n * norm_val
