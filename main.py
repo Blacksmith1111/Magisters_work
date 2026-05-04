@@ -53,6 +53,7 @@ def constellation_normalization(signal, mod_order):
     Normalizes the signal to rms = constellation rms
     '''
     constellation_rms = cf.qam_constellation_rms_calc(mod_order)
+    print(constellation_rms / rms_calc(signal))
     signal = signal / rms_calc(signal) *  constellation_rms
     return signal
 
@@ -109,7 +110,7 @@ def generate_tx_base(bits_num, mod_order, sps, rolloff, filter_span, fs, ts, deb
     #np.random.seed(100)
     np.random.seed(1000)
     bits = np.random.randint(0, 2, bits_num)
-    qam = mod.QAMModem(mod_order)
+    qam = mod.QAMModem(mod_order) if mod_order == 64 else cf.Modulator32QAM()
     
     symbol_signal = qam.modulate(bits)
     up_signal = cf.upsample(symbol_signal, sps)
@@ -174,9 +175,8 @@ def simulate_channel_and_rx(bits, qam, shaped_signal_pure, up_signal, symbol_sig
                             snr_arr, inl_en, dac_gain, adc_gain, sps, sps_2, fs, rolloff,
                             filter_span, ts, mod_order, noise_en = 1, debug_check = 1, data_save = 0):
     
-    bers = np.zeros_like(snr_arr, dtype=np.float64)
+    bers = np.zeros_like(snr_arr, dtype = np.float64)
     nmse_final_arr = np.zeros_like(bers)
-    
     for i in tqdm(range(len(snr_arr)), desc = f"Simulating with INL = {inl_en} LSB"):
         ######### DAC with the distortions
         current_shaped = cf.quantizer(shaped_signal_pure, resolution = 5, gain = dac_gain, inl_en = inl_en) 
@@ -249,8 +249,14 @@ def simulate_channel_and_rx(bits, qam, shaped_signal_pure, up_signal, symbol_sig
             compare_2_signals(up_signal, recovered, title)
 
         ######## Getting symbols back on SPS = 1
+        '''if inl_en == 0:
+            current_rms = rms_calc(downsampled)
+            coeff = cf.qam_constellation_rms_calc(mod_order) / current_rms
+            norm_coeffs_arr[i] = coeff
+            final_symbols = downsampled * coeff
+        else:
+            final_symbols = downsampled * norm_coeffs_arr[i]'''
         final_symbols = constellation_normalization(downsampled, mod_order)
-
         
         final_nmse = nmse_calc(symbol_signal, final_symbols)
         nmse_final_arr[i] = final_nmse
@@ -260,11 +266,34 @@ def simulate_channel_and_rx(bits, qam, shaped_signal_pure, up_signal, symbol_sig
         ber = cf.ber_calc(bits, demodulated_bits)
         bers[i] = ber
         
-    return bers, nmse_final_arr, final_symbols
+    return bers, nmse_final_arr, final_symbols, dac_gain, adc_gain
+
+def ber_gain_plot(ber_array, nmse_array, gain_array, mod_order, title, title1):
+    plt.figure(8)
+    plt.plot(gain_array, ber_array, marker = 'o', color = 'red')
+    plt.grid()
+    #title = f'{mod_order}_QAM_BER(GAIN)_ADC'
+    plt.title(title)
+    plt.xlabel('Gain')
+    plt.ylabel('BER')
+    plt.yscale('log')
+    plt.savefig(f'{title}_{mod_order}_QAM.png')
+    plt.show()
+
+    plt.figure(9)
+    plt.plot(gain_array, nmse_array, marker = 'o', color = 'green')
+    plt.grid()
+    #title = f'{mod_order}_QAM_NMSE(GAIN)_ADC'
+    plt.title(title1)
+    plt.xlabel('Gain')
+    plt.ylabel('NMSE')
+    plt.savefig(f'{title1}_{mod_order}_QAM.png')
+    plt.show()
+
 
 def main():
     # Parameters
-    BITS_NUM = 600_000 #6_000_000 #1_000_002
+    BITS_NUM = 6_000_000 #6_000_000 #1_000_002
     MOD_ORDER = 64
     F_SYM = 10e3 #FS / SPS
     FS = 10e3 # for SPS = 1 !!!
@@ -273,32 +302,66 @@ def main():
     TS = 1 / F_SYM
     ROLLOFF = 0.125
     FILTER_SPAN = 64
-    DAC_GAIN = 2.928
-    ADC_GAIN = 14
+    DAC_GAIN = 2.928 if MOD_ORDER == 64 else 4.179
+    ADC_GAIN = 14 if MOD_ORDER == 64 else 11.3425
     DATA_SAVE = 0
     DEBUG_CHECK = 0
-    INL_VAL = 4
+    INL_COEFF = DAC_GAIN / 4.9 if MOD_ORDER == 64 else DAC_GAIN / 6.0
+    #INL_COEFF = DAC_GAIN / 3
+    INL_VAL = 4 * INL_COEFF
 
     ### Without pre-distorter
     bits, qam, symbol_signal, up_signal, shaped_signal = generate_tx_base(bits_num = BITS_NUM, mod_order = MOD_ORDER, sps = SPS,
             rolloff = ROLLOFF, filter_span = FILTER_SPAN, fs = FS, ts = TS, debug_check = DEBUG_CHECK, data_save = DATA_SAVE, model_apply = 0)
 
-    snr_arr = np.arange(10, 22, 1)
+    snr_arr = np.arange(13, 30, 1)
     shaped_signal_pure = shaped_signal.copy()
+    dac_gains = []
+    adc_gains = []
+    bers_gain_test = []
+    nmse_gain_test = []
+    final_gains = np.linspace(0.01, 0.12, 200)
 
-    ### Simulation with INL
-    bers_with_inl, nmse_final_arr_with_inl, final_symbols_with_inl = simulate_channel_and_rx(bits, qam, shaped_signal_pure, up_signal, symbol_signal, 
-        snr_arr, inl_en = INL_VAL, dac_gain = DAC_GAIN, adc_gain = ADC_GAIN, sps = SPS, sps_2 = SPS_2, fs = FS,
-        rolloff = ROLLOFF, filter_span = FILTER_SPAN,
-        ts = TS, mod_order = MOD_ORDER, debug_check = DEBUG_CHECK, noise_en = 1, data_save = DATA_SAVE)
+    gains = np.linspace(0.2, 20, 200)
     
     ### Simulation without INL
-    bers_no_inl, nmse_final_arr_no_inl, final_symbols_no_inl = simulate_channel_and_rx(bits, qam, shaped_signal, up_signal, symbol_signal, 
-        snr_arr, inl_en = 0, dac_gain = DAC_GAIN, adc_gain = ADC_GAIN, sps = SPS, sps_2 = SPS_2, fs = FS,
-        rolloff = ROLLOFF, filter_span = FILTER_SPAN,
-        ts = TS, mod_order = MOD_ORDER, debug_check = DEBUG_CHECK, noise_en = 1)
+    bers_no_inl, nmse_final_arr_no_inl, final_symbols_no_inl, dac_gain, adc_gain = simulate_channel_and_rx(bits, qam, shaped_signal, up_signal, symbol_signal, 
+            snr_arr, inl_en = 0, dac_gain = DAC_GAIN, adc_gain = ADC_GAIN, sps = SPS,
+            sps_2 = SPS_2, fs = FS,
+            rolloff = ROLLOFF, filter_span = FILTER_SPAN,
+            ts = TS, mod_order = MOD_ORDER, debug_check = DEBUG_CHECK, noise_en = 1) # was 1'''
+    '''adc_gains.append(adc_gain)
+    bers_gain_test.append(bers_no_inl)
+    nmse_gain_test.append(nmse_final_arr_no_inl)'''
+
+
+    MOD_ORDER = 32
+    DAC_GAIN = 2.928 if MOD_ORDER == 64 else 4.179
+    ADC_GAIN = 14 if MOD_ORDER == 64 else 11.3425
+    ### Without pre-distorter 32 QAM
+    bits, qam, symbol_signal, up_signal, shaped_signal = generate_tx_base(bits_num = BITS_NUM, mod_order = MOD_ORDER, sps = SPS,
+            rolloff = ROLLOFF, filter_span = FILTER_SPAN, fs = FS, ts = TS, debug_check = DEBUG_CHECK, data_save = DATA_SAVE, model_apply = 0)
+
+    ### Simulation without INL
+    bers_no_inl_32_qam, nmse_final_arr_no_inl_32_qam, final_symbols_no_inl_32_qam, dac_gain, adc_gain = simulate_channel_and_rx(bits, qam, shaped_signal, up_signal, symbol_signal, 
+            snr_arr, inl_en = 0, dac_gain = DAC_GAIN, adc_gain = ADC_GAIN, sps = SPS,
+            sps_2 = SPS_2, fs = FS,
+            rolloff = ROLLOFF, filter_span = FILTER_SPAN,
+            ts = TS, mod_order = MOD_ORDER, debug_check = DEBUG_CHECK, noise_en = 1) # was 1'''
+
+    '''#for f_g in final_gains:
+        ### Simulation with INL
+    bers_with_inl, nmse_final_arr_with_inl, final_symbols_with_inl, _, _ = simulate_channel_and_rx(bits, qam, shaped_signal_pure, up_signal, symbol_signal, 
+            snr_arr, inl_en = INL_VAL, dac_gain = DAC_GAIN, adc_gain = ADC_GAIN, 
+            sps = SPS, sps_2 = SPS_2, fs = FS,
+            rolloff = ROLLOFF, filter_span = FILTER_SPAN,
+            ts = TS, mod_order = MOD_ORDER, debug_check = DEBUG_CHECK, 
+            noise_en = 1, data_save = DATA_SAVE) # 0.09565'''
+    '''bers_gain_test.append(bers_with_inl)
+        nmse_gain_test.append(nmse_final_arr_with_inl)'''
     
-    ### With pre-distorter MLP
+
+    '''### With pre-distorter MLP
     bits, qam, symbol_signal, up_signal, shaped_signal = generate_tx_base(bits_num = BITS_NUM, mod_order = MOD_ORDER, sps = SPS,
             rolloff = ROLLOFF, filter_span = FILTER_SPAN, fs = FS, ts = TS, debug_check = 0, data_save = DATA_SAVE, model_apply = 1, inl_val = INL_VAL)
     
@@ -317,40 +380,44 @@ def main():
     bers_with_inl_predist_kan, nmse_final_arr_with_inl_predist_kan, final_symbols_with_inl_predist_kan = simulate_channel_and_rx(bits, qam, shaped_signal, up_signal, symbol_signal, 
         snr_arr, inl_en = INL_VAL, dac_gain = DAC_GAIN, adc_gain = ADC_GAIN, sps = SPS, sps_2 = SPS_2, fs = FS,
         rolloff = ROLLOFF, filter_span = FILTER_SPAN,
-        ts = TS, mod_order = MOD_ORDER, debug_check = DEBUG_CHECK, noise_en = 1, data_save = DATA_SAVE)
+        ts = TS, mod_order = MOD_ORDER, debug_check = DEBUG_CHECK, noise_en = 1, data_save = DATA_SAVE)'''
     
+
+    #ber_gain_plot(bers_gain_test, nmse_gain_test, final_gains, mod_order = MOD_ORDER, title = 'BER(final_gain)', title1 = 'NMSE(final_gain)')
+
     plt.figure(10)
-    plt.plot(snr_arr, bers_no_inl, marker = 'o', color = 'red', label = f'{MOD_ORDER} QAM, without INL')
-    plt.plot(snr_arr, bers_with_inl, marker = 'o', color = 'blue', label = f'{MOD_ORDER} QAM, with INL {INL_VAL} LSB')
-    plt.plot(snr_arr, bers_with_inl_predist, marker = 'o', color = 'green', label = f'{MOD_ORDER} QAM, with INL {INL_VAL} LSB and pre-distorter MLP')
-    plt.plot(snr_arr, bers_with_inl_predist_kan, marker = 'o', color = 'brown', label = f'{MOD_ORDER} QAM, with INL {INL_VAL} LSB and pre-distorter KAN')
+    plt.plot(snr_arr, bers_no_inl, marker = 'o', color = 'red', label = f'{64} QAM, without INL')
+    plt.plot(snr_arr, bers_no_inl_32_qam, marker = 'o', color = 'purple', label = f'{MOD_ORDER} QAM, without INL')
+    #plt.plot(snr_arr, bers_with_inl, marker = 'o', color = 'blue', label = f'{MOD_ORDER} QAM, with INL {INL_VAL} LSB')
+    #plt.plot(snr_arr, bers_with_inl_predist, marker = 'o', color = 'green', label = f'{MOD_ORDER} QAM, with INL {INL_VAL / INL_COEFF} LSB and pre-distorter MLP')
+    #plt.plot(snr_arr, bers_with_inl_predist_kan, marker = 'o', color = 'brown', label = f'{MOD_ORDER} QAM, with INL {INL_VAL / INL_COEFF} LSB and pre-distorter KAN')
     plt.legend()
     plt.ylabel('BER')
-    plt.ylim(bottom = 1e-4)
+    #plt.ylim(bottom = 1e-4)
     plt.yscale('log')
     plt.xlabel('SNR')
     plt.title(f'BER(SNR), {MOD_ORDER} QAM, INL {INL_VAL} LSB')
     plt.grid()
-    plt.savefig('BER(SNR).png')
+    #plt.savefig(f'BER(SNR) {MOD_ORDER} QAM INL {INL_VAL} LSB.png')
     plt.show()
 
     plt.figure(11)
     plt.plot(snr_arr, nmse_final_arr_no_inl, marker = 'o', color = 'purple', label = f'{MOD_ORDER} QAM, without INL')
     plt.plot(snr_arr, nmse_final_arr_with_inl, marker = 'o', color = 'orange', label = f'{MOD_ORDER} QAM, with INL {INL_VAL} LSB')
-    plt.plot(snr_arr, nmse_final_arr_with_inl_predist, marker = 'o', color = 'black', label = f'{MOD_ORDER} QAM, with INL {INL_VAL} LSB and pre-distorter MLP')
-    plt.plot(snr_arr, nmse_final_arr_with_inl_predist_kan, marker = 'o', color = 'yellow', label = f'{MOD_ORDER} QAM, with INL {INL_VAL} LSB and pre-distorter KAN')
+    #plt.plot(snr_arr, nmse_final_arr_with_inl_predist, marker = 'o', color = 'black', label = f'{MOD_ORDER} QAM, with INL {INL_VAL / INL_COEFF} LSB and pre-distorter MLP')
+    #plt.plot(snr_arr, nmse_final_arr_with_inl_predist_kan, marker = 'o', color = 'yellow', label = f'{MOD_ORDER} QAM, with INL {INL_VAL / INL_COEFF} LSB and pre-distorter KAN')
     plt.legend()
     plt.ylabel('NSME')
     plt.xlabel('SNR')
     plt.title(f'NMSE(SNR), {MOD_ORDER} QAM, INL {INL_VAL} LSB')
     plt.grid()
-    plt.savefig('NMSE(SNR).png')
+    plt.savefig(f'NMSE(SNR) {MOD_ORDER} QAM INL {INL_VAL} LSB.png')
     plt.show()
 
     cf.constellation_plot(final_symbols_no_inl, MOD_ORDER, '5 bit DAC')
     cf.constellation_plot(final_symbols_with_inl, MOD_ORDER, f'5 bit DAC with INL {INL_VAL} LSB')
-    cf.constellation_plot(final_symbols_with_inl_predist, MOD_ORDER, f'5 bit DAC with INL {INL_VAL} LSB and pre-distorter MLP')
-    cf.constellation_plot(final_symbols_with_inl_predist_kan, MOD_ORDER, f'5 bit DAC with INL {INL_VAL} LSB pre-distorter KAN')
+    #cf.constellation_plot(final_symbols_with_inl_predist, MOD_ORDER, f'5 bit DAC with INL {INL_VAL/ INL_COEFF} LSB and pre-distorter MLP')
+    #cf.constellation_plot(final_symbols_with_inl_predist_kan, MOD_ORDER, f'5 bit DAC with INL {INL_VAL/ INL_COEFF} LSB pre-distorter KAN')
 
 if __name__ == "__main__":
     main()

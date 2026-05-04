@@ -50,7 +50,7 @@ def spectrum_plot(signal: np.ndarray, Fs: float, title: str, plt_en: bool = 0) -
         plt.show()
 
 
-def constellation_plot(modulated_signal: np.ndarray, mod_order: int, title: str) -> None:
+'''def constellation_plot(modulated_signal: np.ndarray, mod_order: int, title: str) -> None:
     plt.figure(figsize=(6, 6))
     plt.scatter(modulated_signal.real, modulated_signal.imag, s=5)
     plt.axhline(0, color="black", linestyle="--", linewidth=0.8)
@@ -59,6 +59,66 @@ def constellation_plot(modulated_signal: np.ndarray, mod_order: int, title: str)
     if title is not None:
         plt.title(title)
     plt.savefig(f"Constellation_{mod_order}_QAM_{title}.png")
+    plt.show()'''
+
+
+def get_ideal_constellation(mod_order: int) -> np.ndarray:
+    if mod_order == 64:
+        levels = np.arange(-7, 8, 2)
+        X, Y = np.meshgrid(levels, levels)
+        return X.flatten() + 1j * Y.flatten()
+        
+    elif mod_order == 32:
+        levels = np.arange(-5, 6, 2)
+        X, Y = np.meshgrid(levels, levels)
+        points = X.flatten() + 1j * Y.flatten()
+        corners_mask = (np.abs(points.real) == 5) & (np.abs(points.imag) == 5)
+        return points[~corners_mask]
+        
+    return None
+
+def constellation_plot(modulated_signal: np.ndarray, mod_order: int, title: str, show_decision_boundaries: bool = True) -> None:
+    plt.figure(figsize=(7, 7))
+    
+
+    plt.scatter(modulated_signal.real, modulated_signal.imag, s=5, alpha=0.5, label='Received Signal')
+    
+    
+    reference_points = get_ideal_constellation(mod_order)
+    if reference_points is not None:
+        plt.scatter(reference_points.real, reference_points.imag, 
+                    s=80, color='red', marker='X', edgecolors='black', label=f'Ideal {mod_order}-QAM')
+        
+    
+    if show_decision_boundaries:
+        if mod_order == 64:
+            boundaries = np.arange(-6, 7, 2)
+        elif mod_order == 32:
+            boundaries = np.arange(-4, 5, 2)
+        else:
+            boundaries = []
+
+        
+        for b in boundaries:
+            
+            plt.axvline(b, color='gray', linestyle=':', linewidth=1.5, alpha=0.7)
+            
+            plt.axhline(b, color='gray', linestyle=':', linewidth=1.5, alpha=0.7)
+            
+    plt.axhline(0, color="black", linestyle="--", linewidth=1)
+    plt.axvline(0, color="black", linestyle="--", linewidth=1)
+    
+    plt.grid(False)
+    if title is not None:
+        plt.title(title)
+        
+    plt.legend(loc='upper right')
+    
+    axis_limit = 9 if mod_order == 64 else 7
+    plt.xlim(-axis_limit, axis_limit)
+    plt.ylim(-axis_limit, axis_limit)
+    
+    plt.savefig(f"Constellation_{mod_order}_QAM_{title}.png", dpi=300)
     plt.show()
 
 
@@ -123,7 +183,7 @@ def INL(full_scale: np.ndarray, lsb_amplitude: float, plt_en: bool = 0) -> np.nd
     return inl_vals
 
 
-def quantizer(signal: np.ndarray, resolution: int, gain: float, inl_en: int = 0):
+def quantizer(signal: np.ndarray, resolution: int, gain: float, inl_en: float = 0):
 
     left_border, right_border = int(-(2**resolution) / 2), int(2**resolution / 2 - 1)
     scaled_signal = signal * gain
@@ -131,6 +191,7 @@ def quantizer(signal: np.ndarray, resolution: int, gain: float, inl_en: int = 0)
     q_quantized = np.clip(np.round((scaled_signal.imag)).astype(np.int32), left_border, right_border)
     
     if inl_en > 0:
+        #actual_inl_lsb = inl_en * ((2**resolution) / 256)
         full_scale = np.arange(left_border, right_border + 1, 1)
         inl_array = INL(full_scale, lsb_amplitude = inl_en, plt_en=0)
         i_indices = i_quantized - left_border
@@ -169,10 +230,16 @@ def downconversion(passband_signal: np.ndarray, Fc: float, Fs: float, plt_en: bo
 
 
 def qam_constellation_rms_calc(mod_order):
-    axis_vals_num = np.sqrt(mod_order)
+    if mod_order == 64:
+        return np.sqrt(42.0)
+    elif mod_order == 32:
+        return np.sqrt(20.0)
+    else:
+        raise ValueError("Unsupported modulation order")
+    '''axis_vals_num = np.sqrt(mod_order)
     vals = np.arange(-2 * axis_vals_num / 2 + 1, 2 * axis_vals_num / 2 + 1, 2)
     rms = np.sqrt(np.mean(vals**2) * 2)
-    return rms
+    return rms'''
 
 
 def normalize_to_ones(objects, targets):
@@ -184,3 +251,41 @@ def normalize_to_ones(objects, targets):
 
 def denormalize_from_ones(objects_n, targets_n, norm_val):
     return objects_n * norm_val, targets_n * norm_val
+
+
+class Modulator32QAM:
+    def __init__(self):
+        self.mapping_table = {
+            (0,0,0,0,0): -3+5j, (0,0,0,0,1): -1+5j, (0,0,0,1,1):  1+5j, (0,0,0,1,0):  3+5j,
+            (0,0,1,0,0): -5+3j, (0,0,1,0,1): -3+3j, (0,0,1,1,1): -1+3j, (0,0,1,1,0):  1+3j, (0,1,1,1,0):  3+3j, (0,1,1,0,0):  5+3j,
+            (0,1,0,0,0): -5+1j, (0,1,0,0,1): -3+1j, (0,1,0,1,1): -1+1j, (0,1,0,1,0):  1+1j, (0,1,1,1,1):  3+1j, (0,1,1,0,1):  5+1j,
+            (1,1,0,0,0): -5-1j, (1,1,0,0,1): -3-1j, (1,1,0,1,1): -1-1j, (1,1,0,1,0):  1-1j, (1,1,1,1,1):  3-1j, (1,1,1,0,1):  5-1j,
+            (1,0,1,0,0): -5-3j, (1,0,1,0,1): -3-3j, (1,0,1,1,1): -1-3j, (1,0,1,1,0):  1-3j, (1,1,1,1,0):  3-3j, (1,1,1,0,0):  5-3j,
+            (1,0,0,0,0): -3-5j, (1,0,0,0,1): -1-5j, (1,0,0,1,1):  1-5j, (1,0,0,1,0):  3-5j
+        }
+
+        self.bits_tuples = list(self.mapping_table.keys())
+        self.constellation = np.array(list(self.mapping_table.values()))
+        
+        self.avg_power = np.mean(np.abs(self.constellation)**2)
+
+    def modulate(self, bits):
+
+        reshaped_bits = np.reshape(bits, (-1, 5))
+        symbols = np.zeros(len(reshaped_bits), dtype=complex)
+
+        for i, bit_group in enumerate(reshaped_bits):
+            symbols[i] = self.mapping_table[tuple(bit_group)]
+
+        return symbols
+
+    def demodulate(self, symbols, type = 'hard'):
+        symbols_complex = np.array(symbols)
+        points = self.constellation
+
+        distances = np.abs(symbols_complex[:, np.newaxis] - points[np.newaxis, :])
+        min_indices = np.argmin(distances, axis=1)
+
+        demodulated_bits = np.array([self.bits_tuples[idx] for idx in min_indices]).flatten()
+
+        return demodulated_bits
