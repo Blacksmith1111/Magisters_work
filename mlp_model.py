@@ -12,15 +12,20 @@ DEVICE = "cuda:0" if torch.cuda.is_available() else "cpu"
 
 MLP_model = nn.Sequential(
     nn.Linear(2, 10),
-    nn.Tanh(),
+    nn.LeakyReLU(),
+    #nn.Tanh(), 
     nn.Linear(10, 10),
-    nn.Tanh(),
+    nn.LeakyReLU(),
+    #nn.Tanh(),
     nn.Linear(10, 10),
-    nn.Tanh(),
+    nn.LeakyReLU(),
+    #nn.Tanh(),
     nn.Linear(10, 10),
-    nn.Tanh(),
+    nn.LeakyReLU(),
+    #nn.Tanh(),
     nn.Linear(10, 10),
-    nn.Tanh(),
+    nn.LeakyReLU(),
+    #nn.Tanh(),
     nn.Linear(10, 2),
 )
 
@@ -145,6 +150,11 @@ def main(train_en = 0, lsb = 2, mod_order = 64):
     obj_file_64_qam_2_lsb = 'model_objects_64_qam_INL_2_LSB.npy'
     obj_file_64_qam_4_lsb = 'model_objects_64_qam_INL_4_LSB.npy'
 
+    trg_file_32_qam = 'model_targets_32_qam.npy'
+    obj_file_32_qam_2_lsb = 'model_objects_32_qam_INL_2_LSB.npy'
+    obj_file_32_qam_4_lsb = 'model_objects_32_qam_INL_4_LSB.npy'
+
+
     if mod_order == 64:
         if lsb == 2:
             objects = np.load(obj_file_64_qam_2_lsb)[1000:1000 + 201000]
@@ -154,6 +164,15 @@ def main(train_en = 0, lsb = 2, mod_order = 64):
             objects = np.load(obj_file_64_qam_4_lsb)[1000:1000 + 201000]
             targets = np.load(trg_file_64_qam)[1000:1000 + 201000]
             weights_file = "qam_64_mlp_4_LSB_weights.pt"
+    else:
+        if lsb == 2:
+            objects = np.load(obj_file_32_qam_2_lsb)[1000:1000 + 201000]
+            targets = np.load(trg_file_32_qam)[1000:1000 + 201000]
+            weights_file = "qam_32_mlp_2_LSB_weights.pt"
+        elif lsb == 4:
+            objects = np.load(obj_file_32_qam_4_lsb)[1000:1000 + 201000]
+            targets = np.load(trg_file_32_qam)[1000:1000 + 201000]
+            weights_file = "qam_32_mlp_4_LSB_weights.pt"
 
     
 
@@ -172,7 +191,7 @@ def main(train_en = 0, lsb = 2, mod_order = 64):
     # model = torch.compile(model)
     criterion = nn.MSELoss()
     lr = 3e-3
-    num_epochs = 20
+    num_epochs = 30
     optimizer = torch.optim.AdamW(model.parameters(), lr=lr)
     scheduler = torch.optim.lr_scheduler.ReduceLROnPlateau(
         optimizer, mode="min", factor=0.1, patience=5
@@ -213,6 +232,6 @@ def main(train_en = 0, lsb = 2, mod_order = 64):
 
 if __name__ == "__main__":
     MOD_ORDER = 64
-    LSB = 4
-    TRAIN_EN = 0
+    LSB = 2
+    TRAIN_EN = 1
     main(train_en = TRAIN_EN, lsb = LSB, mod_order = MOD_ORDER)
