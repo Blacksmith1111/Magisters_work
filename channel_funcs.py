@@ -2,37 +2,17 @@ import numpy as np
 import matplotlib.pyplot as plt
 from commpy.filters import rrcosfilter, rcosfilter
 from scipy import signal as sig
+from scipy.signal import fftconvolve
+from numba import njit
 
 
-'''def rc_filter(signal, filter_span, sps, Fs, rolloff, Ts, plt_en = 1, normalization = 'L2'):
-    filter_len = filter_span * sps# + 1
-    time_stamps, h = rcosfilter(filter_len, alpha=rolloff, Ts=Ts, Fs=Fs)
-
-    if normalization == "L2":
-        h = h / np.sqrt(np.sum(np.abs(h)**2))
-    else:
-        h = h / np.sum(h)
-    
-    if plt_en:
-        plt.figure(1)
-        plt.title('RC filter impulse response')
-        plt.stem(time_stamps, h, label = 'Impulse response')
-        plt.legend()
-        plt.grid()
-        plt.show()
-        plt.close('all')
-
-        spectrum_plot(h, Fs, 'RC filter, h spectrum', plt_en = 1)
-    
-
-    return np.convolve(signal, h, mode="full")'''
-    
 def apply_fixed_lpf(signal, cutoff_hz, fs, N=401, plt_en = 0):
     taps = sig.firwin(N, cutoff_hz, window=('kaiser', 14), fs=fs)
-    taps = taps / np.sqrt(np.sum(np.abs(taps)**2))
+    #taps = taps / np.sqrt(np.sum(np.abs(taps)**2))
+    #taps *= 20
     if plt_en:
         spectrum_plot(taps, fs, title = 'LPF frequency characteristics', plt_en = plt_en)
-    return np.convolve(signal, taps, mode="full")
+    return fftconvolve(signal, taps, mode="full") #np.convolve(signal, taps, mode="full")
 
 def spectrum_plot(signal: np.ndarray, Fs: float, title: str, plt_en: bool = 0) -> None:
     spectrum = np.fft.fftshift(np.fft.fft(signal))
@@ -48,18 +28,6 @@ def spectrum_plot(signal: np.ndarray, Fs: float, title: str, plt_en: bool = 0) -
         plt.grid(True)
         plt.title(title)
         plt.show()
-
-
-'''def constellation_plot(modulated_signal: np.ndarray, mod_order: int, title: str) -> None:
-    plt.figure(figsize=(6, 6))
-    plt.scatter(modulated_signal.real, modulated_signal.imag, s=5)
-    plt.axhline(0, color="black", linestyle="--", linewidth=0.8)
-    plt.axvline(0, color="black", linestyle="--", linewidth=0.8)
-    plt.grid(True)
-    if title is not None:
-        plt.title(title)
-    plt.savefig(f"Constellation_{mod_order}_QAM_{title}.png")
-    plt.show()'''
 
 
 def get_ideal_constellation(mod_order: int) -> np.ndarray:
@@ -160,7 +128,7 @@ def pulse_shaping(
     else:
         h = h / np.sum(h)
 
-    return np.convolve(upsampled_signal, h, mode="full")
+    return fftconvolve(upsampled_signal, h, mode="full") #np.convolve(upsampled_signal, h, mode="full")
 
 
 def ber_calc(initial_bits: np.ndarray, final_bits: np.ndarray) -> float:
@@ -191,7 +159,7 @@ def quantizer(signal: np.ndarray, resolution: int, gain: float, inl_en: float = 
     q_quantized = np.clip(np.round((scaled_signal.imag)).astype(np.int32), left_border, right_border)
     
     if inl_en > 0:
-        #actual_inl_lsb = inl_en * ((2**resolution) / 256)
+
         full_scale = np.arange(left_border, right_border + 1, 1)
         inl_array = INL(full_scale, lsb_amplitude = inl_en, plt_en=0)
         i_indices = i_quantized - left_border
@@ -236,11 +204,6 @@ def qam_constellation_rms_calc(mod_order):
         return np.sqrt(20.0)
     else:
         raise ValueError("Unsupported modulation order")
-    '''axis_vals_num = np.sqrt(mod_order)
-    vals = np.arange(-2 * axis_vals_num / 2 + 1, 2 * axis_vals_num / 2 + 1, 2)
-    rms = np.sqrt(np.mean(vals**2) * 2)
-    return rms'''
-
 
 def normalize_to_ones(objects, targets):
     norm_val = max(np.max(np.abs(objects)), np.max(np.abs(targets)))
@@ -289,3 +252,62 @@ class Modulator32QAM:
         demodulated_bits = np.array([self.bits_tuples[idx] for idx in min_indices]).flatten()
 
         return demodulated_bits
+
+
+@njit(cache=True)
+def _nlms_core_fast(rx_symbols, constellation, initial_gain, num_taps, mu):
+    N = len(rx_symbols)
+    w = np.zeros(num_taps, dtype=np.complex128)
+    w[num_taps // 2] = initial_gain + 0j
+    
+    out_symbols = np.zeros(N, dtype=np.complex128)
+    buffer = np.zeros(num_taps, dtype=np.complex128)
+    
+    for i in range(N):
+        for j in range(num_taps - 1, 0, -1):
+            buffer[j] = buffer[j - 1]
+        buffer[0] = rx_symbols[i]
+        
+        y = 0j
+        for j in range(num_taps):
+            y += w[j] * buffer[j]
+        out_symbols[i] = y
+        
+        if i >= num_taps:
+            distances = np.abs(constellation - y)
+            best_idx = np.argmin(distances)
+            d = constellation[best_idx]
+            
+            e = d - y
+            
+            buffer_power = 0.0
+            for j in range(num_taps):
+                buffer_power += np.abs(buffer[j])**2
+                
+            step = mu / (buffer_power + 1e-8)
+            
+            for j in range(num_taps):
+                w[j] = w[j] + step * e * np.conj(buffer[j])
+                
+    return out_symbols
+
+
+def dd_lms_equalizer(rx_symbols, qam_obj, num_taps=21, mu=0.05):
+    constellation = np.array(qam_obj.constellation, dtype=np.complex128)
+
+    ideal_rms = np.sqrt(np.mean(np.abs(constellation)**2))
+    current_rms = np.sqrt(np.mean(np.abs(rx_symbols)**2))
+    initial_gain = ideal_rms / current_rms if current_rms > 0 else 1.0
+
+    out_symbols = _nlms_core_fast(
+        np.array(rx_symbols, dtype=np.complex128), 
+        constellation, 
+        initial_gain, 
+        num_taps, 
+        mu
+    )
+    
+    delay = num_taps // 2
+    out_aligned = np.roll(out_symbols, -delay)
+    
+    return out_aligned
