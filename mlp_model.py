@@ -12,20 +12,20 @@ DEVICE = "cuda:0" if torch.cuda.is_available() else "cpu"
 
 MLP_model = nn.Sequential(
     nn.Linear(2, 10),
-    nn.LeakyReLU(),
-    #nn.Tanh(), 
+    #nn.LeakyReLU(),
+    nn.Tanh(), 
     nn.Linear(10, 10),
-    nn.LeakyReLU(),
-    #nn.Tanh(),
+    #nn.LeakyReLU(),
+    nn.Tanh(),
     nn.Linear(10, 10),
-    nn.LeakyReLU(),
-    #nn.Tanh(),
+    #nn.LeakyReLU(),
+    nn.Tanh(),
     nn.Linear(10, 10),
-    nn.LeakyReLU(),
-    #nn.Tanh(),
+    #nn.LeakyReLU(),
+    nn.Tanh(),
     nn.Linear(10, 10),
-    nn.LeakyReLU(),
-    #nn.Tanh(),
+    #nn.LeakyReLU(),
+    nn.Tanh(),
     nn.Linear(10, 2),
 )
 
@@ -191,7 +191,7 @@ def main(train_en = 0, lsb = 2, mod_order = 64):
     # model = torch.compile(model)
     criterion = nn.MSELoss()
     lr = 3e-3
-    num_epochs = 30
+    num_epochs = 50
     optimizer = torch.optim.AdamW(model.parameters(), lr=lr)
     scheduler = torch.optim.lr_scheduler.ReduceLROnPlateau(
         optimizer, mode="min", factor=0.1, patience=5

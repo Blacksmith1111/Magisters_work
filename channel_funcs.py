@@ -152,7 +152,8 @@ def ber_calc(initial_bits: np.ndarray, final_bits: np.ndarray) -> float:
 
 def INL(full_scale: np.ndarray, lsb_amplitude: float, plt_en: bool = 0) -> np.ndarray:
     # 1.42
-    inl_vals = lsb_amplitude * np.sin(2 * np.pi * (full_scale - full_scale[0]) / len(full_scale))
+    #inl_vals = lsb_amplitude * np.sin(2 * np.pi * (full_scale - full_scale[0]) / len(full_scale))
+    inl_vals = lsb_amplitude * np.sin(2 * np.pi * (full_scale - full_scale[0]) / (len(full_scale) - 1))
 
     if plt_en:
         plt.figure(figsize=(8, 3))
