@@ -218,27 +218,33 @@ def simulate_channel_and_rx(bits, qam, shaped_signal_pure, up_signal, symbol_sig
             elif inl_en == 2:
                 clip_ratio = 1.17 if mod_order == 64 else 1.4
                 #dac_gain = 2 if mod_order == 64 else 2.5
-                factor = 5/8 
+                factor = 1 #5/8 
             else:
                 clip_ratio = 3.51 if mod_order == 64 else 3.58
                 #dac_gain = 1.41 if mod_order == 64 else 1.7
-                factor = 3.8 / 8
+                factor = 5/8 #3.8 / 8
             #dac_gain = 15.0 / (rms_amp * clip_ratio)
-             
+            print(np.max(np.abs(shaped_signal_pure.real)), np.max(np.abs(shaped_signal_pure.imag))) 
             current_shaped = cf.quantizer(shaped_signal_pure, resolution = 5, gain = dac_gain, inl_en = inl_en * factor) 
+            print(np.max(np.abs(current_shaped.real)), np.max(np.abs(current_shaped.imag))) 
     else:
             current_shaped = shaped_signal_pure
 
 
     if data_save:
         print('Data saving mode')
-        safe_adc_gain_for_saving = 6
+        print(np.max(np.abs(current_shaped.real)), np.max(np.abs(current_shaped.imag)))
+        safe_adc_gain_for_saving = 127 / 15 #6
+        model_objects = cf.quantizer(current_shaped, resolution = 8, gain = safe_adc_gain_for_saving)
+        print(np.max(np.abs(model_objects.real)), np.max(np.abs(model_objects.imag)))
         ### ADC quantizer
         #current_rx_max = np.max([np.abs(downsampled.real), np.abs(downsampled.imag)])
         #dynamic_adc_gain = 115.0 / current_rx_max
         #model_objects = cf.quantizer(downsampled, resolution = 8, gain = adc_gain)
-            
+
+        print(f'RMS of the signal before the ADC = {rms_calc(current_shaped)}; the max value = {np.max(np.abs(current_shaped.real))}; {np.max(np.abs(current_shaped.imag))} imag')    
         model_objects = cf.quantizer(current_shaped, resolution = 8, gain = safe_adc_gain_for_saving)
+        print(f'RMS of the signal after the ADC = {rms_calc(model_objects)}; the max value = {np.max(np.abs(model_objects.real))} real; {np.max(np.abs(model_objects.imag))} imag')
         model_objects -= np.mean(model_objects)
         model_objects /= rms_calc(model_objects)
         np.save(f'model_objects_{mod_order}_qam_INL_{inl_en}_LSB.npy', model_objects)
@@ -297,6 +303,8 @@ def simulate_channel_and_rx(bits, qam, shaped_signal_pure, up_signal, symbol_sig
             #downsampled = cf.quantizer(downsampled, resolution = 8, gain = dynamic_adc_gain)
             
             #adc_gain = 7 if mod_order == 64 else 13
+            #print(np.max(np.abs(recovered.real)), np.max(np.abs(recovered.imag)))
+            print(np.max(np.abs(downsampled.real)), np.max(np.abs(downsampled.imag)))
             downsampled = cf.quantizer(downsampled, resolution = 8, gain = adc_gain)
 
         ######## Matched filter
@@ -383,7 +391,7 @@ def get_snr_from_ber(target_ber: float, snr_array: list, ber_array: list) -> flo
 
 def main():
     # Parameters
-    BITS_NUM = 6_000_00 #6_000_000 #1_000_002
+    BITS_NUM = 12_000_00 #6_000_000 #1_000_002
     MOD_ORDER = 64
     F_SYM = 10e3 # FS / SPS
     FS = 10e3 # for SPS = 1 !!!
@@ -405,9 +413,9 @@ def main():
     MODEL_APPLY = 1
     predist_64 = 0
     predist_32 = 0
-    with_inl_64 = 0
-    with_inl_32 = 0
-    snr_arr = np.arange(14, 15, 1)
+    with_inl_64 = 1
+    with_inl_32 = 1
+    snr_arr = np.arange(14, 30, 1)
 
 
 
@@ -415,26 +423,28 @@ def main():
     bits, qam, symbol_signal, up_signal, shaped_signal = generate_tx_base(bits_num = BITS_NUM, mod_order = MOD_ORDER, sps = SPS,
             rolloff = ROLLOFF, filter_span = FILTER_SPAN, fs = FS, ts = TS, debug_check = DEBUG_CHECK, data_save = DATA_SAVE, model_apply = 0)
     
-    gains = np.linspace(1, 3, 100)
+    gains = np.linspace(14, 18, 50)
     bers_dac_64_qam = []
     bers_dac_32_qam = []
     nmse_dac_64_qam = []
     nmse_dac_32_qam = []
 
-    for g in gains:
-        DAC_GAIN_64_QAM = g #2.265
-        ADC_GAIN_64_QAM = 0 #20.5 # 20.5
-        ### Simulation without INL
-        bers_no_inl_64_qam, nmse_final_arr_no_inl_64_qam, final_symbols_64_qam_no_inl, dac_gain, adc_gain = simulate_channel_and_rx(bits, qam,
+    #for g in gains:
+    DAC_GAIN_64_QAM = 15 / 9 * 0.895 #2.2 #* 0.8#2.05 * 0.75 #2.265
+    ADC_GAIN_64_QAM = 127 / 15 #0#10 * 0.75# 20.5
+    ### Simulation without INL
+    bers_no_inl_64_qam, nmse_final_arr_no_inl_64_qam, final_symbols_64_qam_no_inl, dac_gain, adc_gain = simulate_channel_and_rx(bits, qam,
                         shaped_signal, up_signal, symbol_signal, 
                         snr_arr, inl_en = 0, dac_gain = DAC_GAIN_64_QAM, adc_gain = ADC_GAIN_64_QAM, sps = SPS,
                         sps_2 = SPS_2, fs = FS,
                         rolloff = ROLLOFF, filter_span = FILTER_SPAN,
-                        ts = TS, mod_order = MOD_ORDER, debug_check = DEBUG_CHECK, noise_en = 0)
-        bers_dac_64_qam.append(bers_no_inl_64_qam)
-        nmse_dac_64_qam.append(nmse_final_arr_no_inl_64_qam)
+                        ts = TS, mod_order = MOD_ORDER, debug_check = DEBUG_CHECK, noise_en = 1, data_save = DATA_SAVE)
+        #bers_dac_64_qam.append(bers_no_inl_64_qam)
+        #nmse_dac_64_qam.append(nmse_final_arr_no_inl_64_qam)
 
     if with_inl_64:
+        #DAC_GAIN_64_QAM *= 0.8
+        #ADC_GAIN_64_QAM *= 0.5
         ### Simulation with INL
         bers_with_inl_64_qam, nmse_final_arr_with_inl_64_qam, final_symbols_64_qam_with_inl, _, _ = simulate_channel_and_rx(bits, qam, shaped_signal,
                 up_signal, symbol_signal, 
@@ -473,19 +483,21 @@ def main():
     bits, qam, symbol_signal, up_signal, shaped_signal = generate_tx_base(bits_num = BITS_NUM, mod_order = MOD_ORDER // 2, sps = SPS,
             rolloff = ROLLOFF, filter_span = FILTER_SPAN, fs = FS, ts = TS, debug_check = DEBUG_CHECK, data_save = DATA_SAVE, model_apply = 0)
 
-    for g in gains:
-        DAC_GAIN_32_QAM = g #3.2
-        ADC_GAIN_32_QAM = 0 #20.5 # 20.5
-        ### Simulation without INL
-        bers_no_inl_32_qam, nmse_final_arr_no_inl_32_qam, final_symbols_32_qam_no_inl, dac_gain, adc_gain = simulate_channel_and_rx(bits, qam, shaped_signal, up_signal, symbol_signal, 
+    #for g in gains:
+    DAC_GAIN_32_QAM = 2.2 #* 0.9#3.3# * 0.8 #3 * 0.75 #3.2
+    ADC_GAIN_32_QAM = 127 / 15#0#20.5#10 * 0.75 #20.4 #20.5 # 20.5
+    ### Simulation without INL
+    bers_no_inl_32_qam, nmse_final_arr_no_inl_32_qam, final_symbols_32_qam_no_inl, dac_gain, adc_gain = simulate_channel_and_rx(bits, qam, shaped_signal, up_signal, symbol_signal, 
                     snr_arr, inl_en = 0, dac_gain = DAC_GAIN_32_QAM, adc_gain = ADC_GAIN_32_QAM, sps = SPS,
                     sps_2 = SPS_2, fs = FS,
                     rolloff = ROLLOFF, filter_span = FILTER_SPAN,
-                    ts = TS, mod_order = MOD_ORDER // 2, debug_check = DEBUG_CHECK, noise_en = 0)
-        bers_dac_32_qam.append(bers_no_inl_32_qam)
-        nmse_dac_32_qam.append(nmse_final_arr_no_inl_32_qam)
+                    ts = TS, mod_order = MOD_ORDER // 2, debug_check = DEBUG_CHECK, noise_en = 1)
+        #bers_dac_32_qam.append(bers_no_inl_32_qam)
+        #nmse_dac_32_qam.append(nmse_final_arr_no_inl_32_qam)
 
     if with_inl_32:
+        #DAC_GAIN_32_QAM *= 0.8 #3.2
+        #ADC_GAIN_32_QAM *= 0.5
         ### Simulation with INL
         bers_with_inl_32_qam, nmse_final_arr_with_inl_32_qam, final_symbols_32_qam_with_inl, _, _ = simulate_channel_and_rx(bits, qam, shaped_signal, up_signal, symbol_signal, 
                 snr_arr, inl_en = INL_VAL, dac_gain = DAC_GAIN_32_QAM, adc_gain = ADC_GAIN_32_QAM, 
@@ -517,11 +529,11 @@ def main():
         ts = TS, mod_order = MOD_ORDER // 2, debug_check = DEBUG_CHECK, noise_en = 1, data_save = DATA_SAVE)'''
     
 
-    DC = 'DAC'
-    ber_gain_plot(bers_dac_64_qam, nmse_dac_64_qam, gains, mod_order = MOD_ORDER, title = f'BER(gain) in {DC}', title1 = f'NMSE(gain) in {DC}')
-    ber_gain_plot(bers_dac_32_qam, nmse_dac_32_qam, gains, mod_order = MOD_ORDER // 2, title = f'BER(gain) in {DC}', title1 = f'NMSE(gain) in {DC}')
+    DC = 'ADC_no_work_point'
+    #ber_gain_plot(bers_dac_64_qam, nmse_dac_64_qam, gains, mod_order = MOD_ORDER, title = f'BER(gain) in {DC}', title1 = f'NMSE(gain) in {DC}')
+    #ber_gain_plot(bers_dac_32_qam, nmse_dac_32_qam, gains, mod_order = MOD_ORDER // 2, title = f'BER(gain) in {DC}', title1 = f'NMSE(gain) in {DC}')
     
-    '''FEC_LIMIT = 3.84e-3
+    FEC_LIMIT = 3.84e-3
     
     snr_ideal = get_snr_from_ber(FEC_LIMIT, snr_arr, bers_no_inl_32_qam)
     snr_ideal_2 = get_snr_from_ber(FEC_LIMIT, snr_arr, bers_no_inl_64_qam)
@@ -529,32 +541,34 @@ def main():
     snr_distorted = get_snr_from_ber(FEC_LIMIT, snr_arr, bers_with_inl_32_qam)
     snr_distorted_2 = get_snr_from_ber(FEC_LIMIT, snr_arr, bers_with_inl_64_qam)
     
-    if not np.isnan(snr_ideal) and not np.isnan(snr_distorted):
-        penalty = snr_distorted - snr_ideal
-        penalty_2 = snr_distorted_2 - snr_ideal_2
-        print(f"Penalty on FEC 32 QAM = {FEC_LIMIT}: {penalty:.2f} dB")
-        print(f"Penalty on FEC 64 QAM = {FEC_LIMIT}: {penalty_2:.2f} dB")'''
+    
+    penalty = snr_distorted - snr_ideal
+    penalty_2 = snr_distorted_2 - snr_ideal_2
+    print(f"Penalty on FEC 32 QAM = {FEC_LIMIT}: {penalty:.2f} dB")
+    print(f"Penalty on FEC 64 QAM = {FEC_LIMIT}: {penalty_2:.2f} dB")
 
     plt.figure(10)
     plt.plot(snr_arr, bers_no_inl_64_qam, marker = 'o', color = 'red', label = f'{MOD_ORDER} QAM, without INL')
-    #plt.plot(snr_arr, bers_with_inl_64_qam, marker = 'o', color = 'blue', label = f'{MOD_ORDER} QAM, with INL {INL_VAL} LSB')
+    if with_inl_64:
+        plt.plot(snr_arr, bers_with_inl_64_qam, marker = 'o', color = 'blue', label = f'{MOD_ORDER} QAM, with INL {INL_VAL} LSB')
     #plt.plot(snr_arr, bers_with_inl_64_qam_mlp, marker = 'o', color = 'green', label = f'{MOD_ORDER} QAM, with INL {INL_VAL} LSB + MLP')
     #plt.plot(snr_arr, bers_with_inl_64_qam_kan, marker = 'o', color = 'purple', label = f'{MOD_ORDER} QAM, with INL {INL_VAL} LSB + KAN')
 
-    plt.plot(snr_arr, bers_no_inl_32_qam, marker = '+', color = 'red', label = f'{MOD_ORDER // 2} QAM, without INL')
-    #plt.plot(snr_arr, bers_with_inl_32_qam, marker = '+', color = 'blue', label = f'{MOD_ORDER // 2} QAM, with INL {INL_VAL} LSB')
+    plt.plot(snr_arr, bers_no_inl_32_qam, marker = 's', color = 'red', label = f'{MOD_ORDER // 2} QAM, without INL')
+    if with_inl_32:
+        plt.plot(snr_arr, bers_with_inl_32_qam, marker = 's', color = 'blue', label = f'{MOD_ORDER // 2} QAM, with INL {INL_VAL} LSB')
     #plt.plot(snr_arr, bers_with_inl_32_qam_mlp, marker = '+', color = 'green', label = f'{MOD_ORDER // 2} QAM, with INL {INL_VAL} LSB + MLP')
     #plt.plot(snr_arr, bers_with_inl_32_qam_kan, marker = '+', color = 'purple', label = f'{MOD_ORDER // 2} QAM, with INL {INL_VAL} LSB + KAN')
 
 
     plt.legend()
     plt.ylabel('BER')
-    #plt.ylim(bottom = 1e-5, top = 1e-2)
+    plt.ylim(bottom = 1e-5, top = 1e-2)
     plt.yscale('log')
     plt.xlabel('SNR')
     plt.title(f'BER(SNR), {MOD_ORDER // 2}/{64} QAM, INL {INL_VAL} LSB')
     plt.grid()
-    plt.savefig(f'BER(SNR)_{MOD_ORDER // 2}_{64}_QAM_INL_{INL_VAL}_LSB.png')
+    #plt.savefig(f'BER(SNR)_{MOD_ORDER // 2}_{64}_QAM_INL_{INL_VAL}_LSB.png')
     plt.show()
 
     plt.figure(11)

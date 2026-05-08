@@ -9,7 +9,7 @@ from numba import njit
 def apply_fixed_lpf(signal, cutoff_hz, fs, N=401, plt_en = 0):
     taps = sig.firwin(N, cutoff_hz, window=('kaiser', 14), fs=fs)
     #taps = taps / np.sqrt(np.sum(np.abs(taps)**2))
-    #taps *= 20
+    taps *= 20
     if plt_en:
         spectrum_plot(taps, fs, title = 'LPF frequency characteristics', plt_en = plt_en)
     return fftconvolve(signal, taps, mode="full") #np.convolve(signal, taps, mode="full")
@@ -113,14 +113,6 @@ def pulse_shaping(
     filter_len = filter_span * sps# + 1
     time_stamps, h = rrcosfilter(filter_len, alpha=rolloff, Ts=Ts, Fs=Fs)
 
-    if plt_en:
-        plt.figure(1)
-        plt.title('RRC filter impulse response')
-        plt.stem(time_stamps, h, label = 'Impulse response')
-        plt.legend()
-        plt.grid()
-        plt.show()
-        plt.close('all')
 
     if normaliztion == "L2":
         #h = h / np.sqrt(np.sum(h**2))
@@ -128,7 +120,30 @@ def pulse_shaping(
     else:
         h = h / np.sum(h)
 
-    return fftconvolve(upsampled_signal, h, mode="full") #np.convolve(upsampled_signal, h, mode="full")
+    shaped_signal = fftconvolve(upsampled_signal, h, mode="full") #np.convolve(upsampled_signal, h, mode="full")
+    if plt_en:
+        plt.figure(1)
+        plt.title('RRC filter impulse response')
+        plt.stem(time_stamps, h, label = 'Impulse response')
+        plt.legend()
+        plt.grid()
+        plt.show()
+
+        plt.figure(2)
+        plt.title('Shaped signal real')
+        plt.plot(shaped_signal.real[:-1], marker = 'o')
+        plt.grid()
+        plt.show()
+
+        plt.figure(3)
+        plt.title('Shaped signal imag')
+        plt.plot(shaped_signal.imag[:-1], marker = 'o')
+        plt.grid()
+        plt.show()
+        plt.close('all')
+
+
+    return shaped_signal
 
 
 def ber_calc(initial_bits: np.ndarray, final_bits: np.ndarray) -> float:
