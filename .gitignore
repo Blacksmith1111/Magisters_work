@@ -1,2 +1,4 @@
 test.py
-train_and_test_loss_num_epoch_500.png
+BER(SNR)_NMSE(SNR)_pics/
+Pictures/
+cnn_model.py

@@ -45,19 +45,15 @@ def get_ideal_constellation(mod_order: int) -> np.ndarray:
         
     return None
 
-def constellation_plot(modulated_signal: np.ndarray, mod_order: int, title: str, show_decision_boundaries: bool = True) -> None:
+def constellation_plot(modulated_signal: np.ndarray, mod_order: int, title: str, show_decision_boundaries: bool = True, save_file:str = 'None') -> None:
     plt.figure(figsize=(7, 7))
-    
-
     plt.scatter(modulated_signal.real, modulated_signal.imag, s=5, alpha=0.5, label='Received Signal')
-    
     
     reference_points = get_ideal_constellation(mod_order)
     if reference_points is not None:
         plt.scatter(reference_points.real, reference_points.imag, 
                     s=80, color='red', marker='X', edgecolors='black', label=f'Ideal {mod_order}-QAM')
         
-    
     if show_decision_boundaries:
         if mod_order == 64:
             boundaries = np.arange(-6, 7, 2)
@@ -66,11 +62,8 @@ def constellation_plot(modulated_signal: np.ndarray, mod_order: int, title: str,
         else:
             boundaries = []
 
-        
         for b in boundaries:
-            
             plt.axvline(b, color='gray', linestyle=':', linewidth=1.5, alpha=0.7)
-            
             plt.axhline(b, color='gray', linestyle=':', linewidth=1.5, alpha=0.7)
             
     plt.axhline(0, color="black", linestyle="--", linewidth=1)
@@ -85,8 +78,8 @@ def constellation_plot(modulated_signal: np.ndarray, mod_order: int, title: str,
     axis_limit = 9 if mod_order == 64 else 7
     plt.xlim(-axis_limit, axis_limit)
     plt.ylim(-axis_limit, axis_limit)
-    
-    plt.savefig(f"Constellation_{mod_order}_QAM_{title}.png", dpi=300)
+    if not save_file == 'None': 
+        plt.savefig(save_file)
     plt.show()
 
 

@@ -8,26 +8,41 @@ from tqdm import tqdm
 from mlp_model import MLP_model, inference
 from efficient_kan_model import inference_kan, KAN_model
 from concurrent.futures import ProcessPoolExecutor, as_completed
+import os
+from cnn_model import CNN_DPD_Micro, inference_cnn
 
 
 DEVICE = 'cuda:0'
 model_mlp = MLP_model.to(DEVICE)
 model_kan = KAN_model.to(DEVICE)
+model_cnn = CNN_DPD_Micro().to(DEVICE)
+
 ### 64 QAM weights
 WEIGHTS_FILE_64_QAM_MLP_2_LSB = 'qam_64_mlp_2_LSB_weights.pt'
 WEIGHTS_FILE_64_QAM_KAN_2_LSB = 'qam_64_kan_2_LSB_weights.pt'
 WEIGHTS_FILE_64_QAM_MLP_4_LSB = 'qam_64_mlp_4_LSB_weights.pt'
 WEIGHTS_FILE_64_QAM_KAN_4_LSB = 'qam_64_kan_4_lsb_weights.pt'
+WEIGHTS_FILE_64_QAM_CNN_2_LSB = 'qam_64_cnn_2_LSB_weights.pt'
 ### 32 QAM weights
 WEIGHTS_FILE_32_QAM_MLP_2_LSB = 'qam_32_mlp_2_LSB_weights.pt'
 WEIGHTS_FILE_32_QAM_MLP_4_LSB = 'qam_32_mlp_4_LSB_weights.pt'
 WEIGHTS_FILE_32_QAM_KAN_2_LSB = 'qam_32_kan_2_LSB_weights.pt'
 WEIGHTS_FILE_32_QAM_KAN_4_LSB = 'qam_32_kan_4_LSB_weights.pt'
+WEIGHTS_FILE_32_QAM_CNN_2_LSB = 'qam_32_cnn_2_LSB_weights.pt'
 
-SIMULATION_WEIGHTS = {64:{'MLP':{2 : WEIGHTS_FILE_64_QAM_MLP_2_LSB, 4 : WEIGHTS_FILE_64_QAM_MLP_4_LSB}, 
-                          'KAN':{2 : WEIGHTS_FILE_64_QAM_KAN_2_LSB, 4 : WEIGHTS_FILE_64_QAM_KAN_4_LSB}},
-                        32:{'MLP':{2 : WEIGHTS_FILE_32_QAM_MLP_2_LSB, 4 : WEIGHTS_FILE_32_QAM_MLP_4_LSB}, 
-                          'KAN':{2 : WEIGHTS_FILE_32_QAM_KAN_2_LSB, 4 : WEIGHTS_FILE_32_QAM_KAN_4_LSB}}}
+
+SIMULATION_WEIGHTS = {
+    64: {
+        'MLP': {2: WEIGHTS_FILE_64_QAM_MLP_2_LSB, 4: WEIGHTS_FILE_64_QAM_MLP_4_LSB},
+        'KAN': {2: WEIGHTS_FILE_64_QAM_KAN_2_LSB, 4: WEIGHTS_FILE_64_QAM_KAN_4_LSB},
+        'CNN': {2: WEIGHTS_FILE_64_QAM_CNN_2_LSB}
+    },
+    32: {
+        'MLP': {2: WEIGHTS_FILE_32_QAM_MLP_2_LSB, 4: WEIGHTS_FILE_32_QAM_MLP_4_LSB},
+        'KAN': {2: WEIGHTS_FILE_32_QAM_KAN_2_LSB, 4: WEIGHTS_FILE_32_QAM_KAN_4_LSB},
+        'CNN': {2: WEIGHTS_FILE_32_QAM_CNN_2_LSB}
+    }
+}
 
 
 def time_syncronization(base_signal, delayed_signal, time_delay = None):
@@ -138,9 +153,9 @@ def generate_tx_base(bits_num, mod_order, sps, rolloff, filter_span, fs, ts, deb
         print('Using the model')
         ### Model applying
         mean_val = np.mean(shaped_signal)
-        shaped_signal -= mean_val
-        #shaped_rms = rms_calc(shaped_signal)
-        shaped_normalized = shaped_signal / global_rms
+        #shaped_signal -= mean_val
+        shaped_rms = rms_calc(shaped_signal)
+        shaped_normalized = shaped_signal / shaped_rms #global_rms
         if model_apply == 1:
             prediction = inference(shaped_normalized,
                 batch_size = len(shaped_normalized),
@@ -148,26 +163,44 @@ def generate_tx_base(bits_num, mod_order, sps, rolloff, filter_span, fs, ts, deb
                 device = DEVICE,
                 weights_file = SIMULATION_WEIGHTS[mod_order]['MLP'][inl_val]) 
             print(SIMULATION_WEIGHTS[mod_order]['MLP'][inl_val])
-        else:
-            current_max = np.max(np.abs(shaped_normalized))
+        elif model_apply == 2:
+            #current_max = np.max(np.abs(shaped_normalized))
+            current_max = max(np.max(np.abs(shaped_normalized.real)), np.max(np.abs(shaped_normalized.imag)))
+            print(f'With KAN current max is {current_max}')
             prediction = inference_kan(
                 shaped_normalized, 
                 batch_size=8192, 
                 model = model_kan, 
                 device = DEVICE, 
                 weights_file = SIMULATION_WEIGHTS[mod_order]['KAN'][inl_val],
-                max_val = current_max
+                max_val = current_max#2.024
             )
+            
             print(SIMULATION_WEIGHTS[mod_order]['KAN'][inl_val])
-        prediction *= global_rms#shaped_rms # Switched back to the initial rms
-        de_centered_signal = prediction + mean_val
+        elif model_apply == 3:
+             
+            pred_complex = inference_cnn(
+                shaped_normalized,
+                batch_size=32, 
+                model=model_cnn,
+                device=DEVICE,
+                weights_file=SIMULATION_WEIGHTS[mod_order]['CNN'][inl_val],
+                seq_len=128 
+            )
+            
+            prediction = np.column_stack((pred_complex.real, pred_complex.imag))
+
+        prediction *= shaped_rms #global_rms#shaped_rms # Switched back to the initial rms
+        de_centered_signal = prediction #+ mean_val
+        
         shaped_signal = de_centered_signal[:, 0] + 1j * de_centered_signal[:, 1]
+        
     else:
         print('Not using the model')
 
     if data_save:
         print(f'global_rms for targets is {global_rms}')
-        centered_shaped = shaped_signal - np.mean(shaped_signal)
+        centered_shaped = np.copy(shaped_signal)# - np.mean(shaped_signal)
         centered_shaped /= global_rms #rms_calc(centered_shaped)
         np.save(f'model_targets_{mod_order}_qam.npy', centered_shaped)
     
@@ -183,7 +216,7 @@ def generate_tx_base(bits_num, mod_order, sps, rolloff, filter_span, fs, ts, deb
 
 def simulate_channel_and_rx(bits, qam, shaped_signal_pure, up_signal, symbol_signal, 
                             snr_arr, inl_en, dac_gain, adc_gain, sps, sps_2, fs, rolloff,
-                            filter_span, ts, mod_order, noise_en = 1, debug_check = 1, data_save = 0, model_apply = 0):
+                            filter_span, ts, mod_order, noise_en = 1, debug_check = 1, data_save = 0):
     
     bers = np.zeros_like(snr_arr, dtype = np.float64)
     nmse_final_arr = np.zeros_like(bers)
@@ -202,15 +235,16 @@ def simulate_channel_and_rx(bits, qam, shaped_signal_pure, up_signal, symbol_sig
             elif inl_en == 2:
                 clip_ratio = 1.17 if mod_order == 64 else 1.4
                 #dac_gain = 2 if mod_order == 64 else 2.5
-                factor = 6/8 
+                #factor = 4/8 if mod_order == 32 else 5/8 
+                factor = 5/8
             else:
                 clip_ratio = 3.51 if mod_order == 64 else 3.58
                 #dac_gain = 1.41 if mod_order == 64 else 1.7
-                factor = 5/8 #3.8 / 8
+                factor = 4/8#4/8 #3.8 / 8
             #dac_gain = 15.0 / (rms_amp * clip_ratio)
-            print(np.max(np.abs(shaped_signal_pure.real)), np.max(np.abs(shaped_signal_pure.imag))) 
+            print(f'Max values of the real and imag components before the DAC: {np.max(np.abs(shaped_signal_pure.real))}; {np.max(np.abs(shaped_signal_pure.imag))}') 
             current_shaped = cf.quantizer(shaped_signal_pure, resolution = 5, gain = dac_gain, inl_en = inl_en * factor) 
-            print(np.max(np.abs(current_shaped.real)), np.max(np.abs(current_shaped.imag))) 
+            print(f'Max values of the real and imag components after the DAC: {np.max(np.abs(current_shaped.real))}; {np.max(np.abs(current_shaped.imag))}')
     else:
             current_shaped = shaped_signal_pure
 
@@ -223,8 +257,8 @@ def simulate_channel_and_rx(bits, qam, shaped_signal_pure, up_signal, symbol_sig
         model_objects /= (adc_gain * dac_gain)
         print(f'{np.max(np.abs(model_objects.real))}, {np.max(np.abs(model_objects.imag))}: After the de-embedding')
 
-        model_objects -= np.mean(model_objects)
-        model_objects /= global_rms #rms_calc(model_objects)
+        #model_objects -= np.mean(model_objects)
+        model_objects /= rms_calc(model_objects) #global_rms 
         print(f'global_rms for objects is {global_rms}')
         np.save(f'model_objects_{mod_order}_qam_INL_{inl_en}_LSB.npy', model_objects)
         return 1, 1, 1, 1, 1
@@ -277,8 +311,9 @@ def simulate_channel_and_rx(bits, qam, shaped_signal_pure, up_signal, symbol_sig
 
         ### ADC quantizer
         if adc_gain != 0:
-            print(np.max(np.abs(downsampled.real)), np.max(np.abs(downsampled.imag)))
+            print(f'Max values of the real and imag components before the ADC: {np.max(np.abs(downsampled.real))}; {np.max(np.abs(downsampled.imag))}')
             downsampled = cf.quantizer(downsampled, resolution = 8, gain = adc_gain)
+            print(f'Max values of the real and imag components after the ADC: {np.max(np.abs(downsampled.real))}; {np.max(np.abs(downsampled.imag))}')
 
         ######## Matched filter
         downsampled_shaped = cf.pulse_shaping(downsampled, rolloff, filter_span, sps, ts, fs * sps, plt_en=0)
@@ -298,8 +333,8 @@ def simulate_channel_and_rx(bits, qam, shaped_signal_pure, up_signal, symbol_sig
             compare_2_signals(up_signal, recovered, title)
 
         ######## Getting symbols back on SPS = 1
-        final_symbols = constellation_normalization(downsampled, mod_order)
-        #final_symbols = cf.dd_lms_equalizer(downsampled, qam, num_taps=31, mu=0.05)
+        #final_symbols = constellation_normalization(downsampled, mod_order)
+        final_symbols = cf.dd_lms_equalizer(downsampled, qam, num_taps=31, mu=0.05)
         #final_symbols = cf.dd_lms_equalizer(downsampled, symbol_signal, qam, num_taps=21, mu=0.005, train_len = len(downsampled))
 
 
@@ -364,37 +399,40 @@ def get_snr_from_ber(target_ber: float, snr_array: list, ber_array: list) -> flo
 
 def main():
     # Parameters
-    BITS_NUM = 12_000_00 #6_000_000 #1_000_002
+    BITS_NUM = 12_000_00 #6_000_000
     MOD_ORDER = 64
     F_SYM = 10e3 # FS / SPS
     FS = 10e3 # for SPS = 1 !!!
     SPS = 2
-    SPS_2 = 10 * 2 #was not there
+    SPS_2 = 10 * 2
     TS = 1 / F_SYM
     ROLLOFF = 0.2 #0.125
-    FILTER_SPAN = 64 # added was w/o * 2
+    FILTER_SPAN = 64
     DATA_SAVE = 0
     DEBUG_CHECK = 0
-    INL_COEFF = (5/8)
-    INL_VAL = 2 #* INL_COEFF
-    MODEL_APPLY = 1
+    INL_VAL = 2
+
     predist_64_mlp = 0
-    predist_32_mlp = 0
     predist_64_kan = 0
-    predist_32_kan = 0
-    with_inl_64 = 1
-    with_inl_32 = 1
-    without_inl_64 = 1
-    without_inl_32 = 1
-    SEED = 1000
-    snr_arr = np.arange(14, 34, 1)
-
-
-
-    ### Without pre-distorter
-    bits, qam, symbol_signal, up_signal, shaped_signal = generate_tx_base(bits_num = BITS_NUM, mod_order = MOD_ORDER, sps = SPS,
-            rolloff = ROLLOFF, filter_span = FILTER_SPAN, fs = FS, ts = TS, debug_check = DEBUG_CHECK, data_save = DATA_SAVE, model_apply = 0, seed = SEED)
+    with_inl_64 = 0
+    without_inl_64 = 0
+    initial_64_qam = 0
     
+    predist_32_mlp = 1
+    predist_32_kan = 1
+    with_inl_32 = 1
+    without_inl_32 = 1
+    initial_32_qam = 1
+
+    SEED = 100
+    snr_arr = np.arange(14, 30, 1)
+
+
+    if initial_64_qam:
+            ### Without pre-distorter
+            bits, qam, symbol_signal, up_signal, shaped_signal = generate_tx_base(bits_num = BITS_NUM, mod_order = MOD_ORDER, sps = SPS,
+                    rolloff = ROLLOFF, filter_span = FILTER_SPAN, fs = FS, ts = TS, debug_check = DEBUG_CHECK, data_save = DATA_SAVE, model_apply = 0, seed = SEED)
+     
     gains = np.linspace(14, 18, 50)
     bers_dac_64_qam = []
     bers_dac_32_qam = []
@@ -402,7 +440,7 @@ def main():
     nmse_dac_32_qam = []
 
     #for g in gains:
-    DAC_GAIN_64_QAM = 15 / 9 * 0.85#2.2 #* 0.8#2.05 * 0.75 #2.265
+    DAC_GAIN_64_QAM = 15 / 9 #2.2 #* 0.8#2.05 * 0.75 #2.265
     ADC_GAIN_64_QAM = 127 / 15 #0#10 * 0.75# 20.5
 
     if without_inl_64:
@@ -426,7 +464,7 @@ def main():
                 sps = SPS, sps_2 = SPS_2, fs = FS,
                 rolloff = ROLLOFF, filter_span = FILTER_SPAN,
                 ts = TS, mod_order = MOD_ORDER, debug_check = DEBUG_CHECK, 
-                noise_en = 1, data_save = DATA_SAVE, model_apply = 0)
+                noise_en = 1, data_save = DATA_SAVE)
 
     if predist_64_mlp:
         ### With pre-distorter MLP
@@ -449,13 +487,11 @@ def main():
         snr_arr, inl_en = INL_VAL, dac_gain = DAC_GAIN, adc_gain = ADC_GAIN, sps = SPS, sps_2 = SPS_2, fs = FS,
         rolloff = ROLLOFF, filter_span = FILTER_SPAN,
         ts = TS, mod_order = MOD_ORDER, debug_check = DEBUG_CHECK, noise_en = 1, data_save = DATA_SAVE)'''
-
-    '''DAC_GAIN = 2.928 if MOD_ORDER == 64 else 4.179
-    ADC_GAIN = 14 if MOD_ORDER == 64 else 11.3425'''
     
-    ### Without pre-distorter 32 QAM
-    bits, qam, symbol_signal, up_signal, shaped_signal = generate_tx_base(bits_num = BITS_NUM, mod_order = MOD_ORDER // 2, sps = SPS,
-            rolloff = ROLLOFF, filter_span = FILTER_SPAN, fs = FS, ts = TS, debug_check = DEBUG_CHECK, data_save = DATA_SAVE, model_apply = 0, seed = SEED)
+    if initial_32_qam:
+        ### Without pre-distorter 32 QAM
+        bits, qam, symbol_signal, up_signal, shaped_signal = generate_tx_base(bits_num = BITS_NUM, mod_order = MOD_ORDER // 2, sps = SPS,
+                rolloff = ROLLOFF, filter_span = FILTER_SPAN, fs = FS, ts = TS, debug_check = DEBUG_CHECK, data_save = DATA_SAVE, model_apply = 0, seed = SEED)
 
     #for g in gains:
     DAC_GAIN_32_QAM = 2.2 #* 0.9#3.3# * 0.8 #3 * 0.75 #3.2
@@ -472,15 +508,13 @@ def main():
             #nmse_dac_32_qam.append(nmse_final_arr_no_inl_32_qam)
 
     if with_inl_32:
-        #DAC_GAIN_32_QAM *= 0.8 #3.2
-        #ADC_GAIN_32_QAM *= 0.5
         ### Simulation with INL
         bers_with_inl_32_qam, nmse_final_arr_with_inl_32_qam, final_symbols_32_qam_with_inl, _, _ = simulate_channel_and_rx(bits, qam, shaped_signal, up_signal, symbol_signal, 
                 snr_arr, inl_en = INL_VAL, dac_gain = DAC_GAIN_32_QAM, adc_gain = ADC_GAIN_32_QAM, 
                 sps = SPS, sps_2 = SPS_2, fs = FS,
                 rolloff = ROLLOFF, filter_span = FILTER_SPAN,
                 ts = TS, mod_order = MOD_ORDER // 2, debug_check = DEBUG_CHECK, 
-                noise_en = 1, data_save = DATA_SAVE, model_apply = 0)
+                noise_en = 1, data_save = DATA_SAVE)
 
     if predist_32_mlp:
         ### With pre-distorter MLP
@@ -493,16 +527,31 @@ def main():
             rolloff = ROLLOFF, filter_span = FILTER_SPAN,
             ts = TS, mod_order = MOD_ORDER // 2, debug_check = DEBUG_CHECK, noise_en = 1, data_save = DATA_SAVE)
     
-
-    '''### With pre-distorter KAN
-    bits, qam, symbol_signal, up_signal, shaped_signal = generate_tx_base(bits_num = BITS_NUM, mod_order = MOD_ORDER // 2, sps = SPS,
-            rolloff = ROLLOFF, filter_span = FILTER_SPAN, fs = FS, ts = TS, debug_check = 0, data_save = DATA_SAVE, model_apply = 2, inl_val = INL_VAL)
-    
-    ### Simulation with INL and pre-distorter KAN
-    bers_with_inl_64_qam_kan, nmse_final_arr_with_inl_64_qam_kan, final_symbols_32_qam_with_inl_kan, _, _ = simulate_channel_and_rx(bits, qam, shaped_signal, up_signal, symbol_signal, 
-        snr_arr, inl_en = INL_VAL, dac_gain = DAC_GAIN, adc_gain = ADC_GAIN, sps = SPS, sps_2 = SPS_2, fs = FS,
-        rolloff = ROLLOFF, filter_span = FILTER_SPAN,
-        ts = TS, mod_order = MOD_ORDER // 2, debug_check = DEBUG_CHECK, noise_en = 1, data_save = DATA_SAVE)'''
+    if predist_64_kan:
+        ### With pre-distorter KAN
+        bits, qam, symbol_signal, up_signal, shaped_signal = generate_tx_base(bits_num = BITS_NUM, mod_order = MOD_ORDER, sps = SPS,
+                rolloff = ROLLOFF, filter_span = FILTER_SPAN, fs = FS, ts = TS, debug_check = 0, data_save = DATA_SAVE, model_apply = 2, inl_val = INL_VAL)
+        
+        ### Simulation with INL and pre-distorter KAN
+        bers_with_inl_64_qam_kan, nmse_final_arr_with_inl_64_qam_kan, final_symbols_64_qam_with_inl_kan, _, _ = simulate_channel_and_rx(
+            bits, qam,
+            shaped_signal, up_signal, symbol_signal, 
+            snr_arr, inl_en = INL_VAL, dac_gain = DAC_GAIN_64_QAM, adc_gain = ADC_GAIN_64_QAM, sps = SPS, sps_2 = SPS_2, fs = FS,
+            rolloff = ROLLOFF, filter_span = FILTER_SPAN,
+            ts = TS, mod_order = MOD_ORDER, debug_check = DEBUG_CHECK, noise_en = 1, data_save = DATA_SAVE)
+        
+    if predist_32_kan:
+        ### With pre-distorter KAN
+        bits, qam, symbol_signal, up_signal, shaped_signal = generate_tx_base(bits_num = BITS_NUM, mod_order = MOD_ORDER // 2, sps = SPS,
+                rolloff = ROLLOFF, filter_span = FILTER_SPAN, fs = FS, ts = TS, debug_check = 0, data_save = DATA_SAVE, model_apply = 3, inl_val = INL_VAL)
+        
+        ### Simulation with INL and pre-distorter KAN
+        bers_with_inl_32_qam_kan, nmse_final_arr_with_inl_32_qam_kan, final_symbols_32_qam_with_inl_kan, _, _ = simulate_channel_and_rx(
+            bits, qam, shaped_signal, up_signal, symbol_signal, 
+            snr_arr, inl_en = INL_VAL, dac_gain = DAC_GAIN_32_QAM, adc_gain = ADC_GAIN_32_QAM, sps = SPS, sps_2 = SPS_2, fs = FS,
+            rolloff = ROLLOFF, filter_span = FILTER_SPAN,
+            ts = TS, mod_order = MOD_ORDER // 2, debug_check = DEBUG_CHECK, noise_en = 1, data_save = DATA_SAVE)
+        
     
 
     DC = 'ADC_no_work_point'
@@ -511,61 +560,86 @@ def main():
     
     FEC_LIMIT = 3.84e-3
     
-    snr_ideal = get_snr_from_ber(FEC_LIMIT, snr_arr, bers_no_inl_32_qam)
-    snr_ideal_2 = get_snr_from_ber(FEC_LIMIT, snr_arr, bers_no_inl_64_qam)
+    '''snr_ideal_32 = get_snr_from_ber(FEC_LIMIT, snr_arr, bers_no_inl_32_qam)
+    snr_ideal_64 = get_snr_from_ber(FEC_LIMIT, snr_arr, bers_no_inl_64_qam)
 
-    snr_distorted = get_snr_from_ber(FEC_LIMIT, snr_arr, bers_with_inl_32_qam)
-    snr_distorted_2 = get_snr_from_ber(FEC_LIMIT, snr_arr, bers_with_inl_64_qam)
+    snr_distorted_32 = get_snr_from_ber(FEC_LIMIT, snr_arr, bers_with_inl_32_qam)
+    snr_distorted_64 = get_snr_from_ber(FEC_LIMIT, snr_arr, bers_with_inl_64_qam)
     
-    
-    penalty = snr_distorted - snr_ideal
-    penalty_2 = snr_distorted_2 - snr_ideal_2
-    print(f"Penalty on FEC 32 QAM = {FEC_LIMIT}: {penalty:.2f} dB")
-    print(f"Penalty on FEC 64 QAM = {FEC_LIMIT}: {penalty_2:.2f} dB")
+    penalty_32 = snr_distorted_32 - snr_ideal_32
+    penalty_64 = snr_distorted_64 - snr_ideal_64
+    print(f"Penalty on FEC 32 QAM = {FEC_LIMIT}: {penalty_32:.2f} dB")
+    print(f"Penalty on FEC 64 QAM = {FEC_LIMIT}: {penalty_64:.2f} dB")'''
+
+
+    folder_name = 'Pictures'
+    if not os.path.exists(folder_name):
+        os.makedirs(folder_name, exist_ok = True)
 
     plt.figure(10)
-    plt.plot(snr_arr, bers_no_inl_64_qam, marker = 'o', color = 'red', label = f'{MOD_ORDER} QAM, without INL')
+    if without_inl_64:
+        plt.plot(snr_arr, bers_no_inl_64_qam, marker = 'o', color = 'red', label = f'{MOD_ORDER} QAM, without INL')
     if with_inl_64:
         plt.plot(snr_arr, bers_with_inl_64_qam, marker = 'o', color = 'blue', label = f'{MOD_ORDER} QAM, with INL {INL_VAL} LSB')
     if predist_64_mlp:
         plt.plot(snr_arr, bers_with_inl_64_qam_mlp, marker = 'o', color = 'green', label = f'{MOD_ORDER} QAM, with INL {INL_VAL} LSB + MLP')
-    #plt.plot(snr_arr, bers_with_inl_64_qam_kan, marker = 'o', color = 'purple', label = f'{MOD_ORDER} QAM, with INL {INL_VAL} LSB + KAN')
+    if predist_64_kan:
+        plt.plot(snr_arr, bers_with_inl_64_qam_kan, marker = 'o', color = 'purple', label = f'{MOD_ORDER} QAM, with INL {INL_VAL} LSB + KAN')
 
-    plt.plot(snr_arr, bers_no_inl_32_qam, marker = 's', color = 'red', label = f'{MOD_ORDER // 2} QAM, without INL')
+    if without_inl_32:
+        plt.plot(snr_arr, bers_no_inl_32_qam, marker = 's', color = 'red', label = f'{MOD_ORDER // 2} QAM, without INL')
     if with_inl_32:
         plt.plot(snr_arr, bers_with_inl_32_qam, marker = 's', color = 'blue', label = f'{MOD_ORDER // 2} QAM, with INL {INL_VAL} LSB')
     if predist_32_mlp:
         plt.plot(snr_arr, bers_with_inl_32_qam_mlp, marker = 's', color = 'green', label = f'{MOD_ORDER // 2} QAM, with INL {INL_VAL} LSB + MLP')
-    #plt.plot(snr_arr, bers_with_inl_32_qam_kan, marker = '+', color = 'purple', label = f'{MOD_ORDER // 2} QAM, with INL {INL_VAL} LSB + KAN')
-
+    if predist_32_kan:
+        plt.plot(snr_arr, bers_with_inl_32_qam_kan, marker = 's', color = 'purple', label = f'{MOD_ORDER // 2} QAM, with INL {INL_VAL} LSB + KAN')
 
     plt.legend()
     plt.ylabel('BER')
     plt.ylim(bottom = 1e-5, top = 1e-2)
-    plt.axhline(y = FEC_LIMIT)
+    plt.axhline(y = FEC_LIMIT, color = 'red', linestyle = '--')
     plt.yscale('log')
     plt.xlabel('SNR')
-    plt.title(f'BER(SNR), {MOD_ORDER // 2}/{64} QAM, INL {INL_VAL} LSB')
+    plt.title(f'BER(SNR), {MOD_ORDER // 2}/{MOD_ORDER} QAM, INL {INL_VAL} LSB')
     plt.grid()
-    plt.savefig(f'BER(SNR)_{MOD_ORDER // 2}_{64}_QAM_INL_{INL_VAL}_LSB.png')
+    plot_name = f'BER(SNR)_{MOD_ORDER // 2}_{MOD_ORDER}_QAM_INL_{INL_VAL}_LSB.png'
+    file_path = os.path.join(folder_name, plot_name)
+    plt.savefig(file_path)
     plt.show()
-    exit()
 
     plt.figure(11)
-    plt.plot(snr_arr, nmse_final_arr_no_inl, marker = 'o', color = 'purple', label = f'{64} QAM, without INL')
-    plt.plot(snr_arr, nmse_final_arr_with_inl_64_qam, marker = 'o', color = 'orange', label = f'{64} QAM, with INL {INL_VAL / INL_COEFF} LSB')
-    plt.plot(snr_arr, nmse_final_arr_no_inl_32_qam, marker = 'o', color = 'red', label = f'{MOD_ORDER} QAM, with INL {INL_VAL/INL_COEFF} LSB')
-    plt.plot(snr_arr, nmse_final_arr_with_inl_32_qam, marker = 'o', color = 'green', label = f'{MOD_ORDER} QAM, with INL {INL_VAL/INL_COEFF} LSB')
-    #plt.plot(snr_arr, nmse_final_arr_with_inl_predist, marker = 'o', color = 'black', label = f'{MOD_ORDER} QAM, with INL {INL_VAL / INL_COEFF} LSB and pre-distorter MLP')
-    #plt.plot(snr_arr, nmse_final_arr_with_inl_predist_kan, marker = 'o', color = 'yellow', label = f'{MOD_ORDER} QAM, with INL {INL_VAL / INL_COEFF} LSB and pre-distorter KAN')
+    if without_inl_64:
+        plt.plot(snr_arr, nmse_final_arr_no_inl_64_qam, marker = 'o', color = 'red', label = f'{64} QAM, without INL')
+    if with_inl_64:
+        plt.plot(snr_arr, nmse_final_arr_with_inl_64_qam, marker = 'o', color = 'blue', label = f'{64} QAM, with INL {INL_VAL} LSB')
+    if predist_64_mlp:
+        plt.plot(snr_arr, nmse_final_arr_with_inl_64_qam_mlp, marker = 'o', color = 'green', label = f'{MOD_ORDER} QAM, with INL {INL_VAL} LSB + MLP')
+    if predist_64_kan:
+        pass
+
+    if without_inl_32:
+        plt.plot(snr_arr, nmse_final_arr_no_inl_32_qam, marker = 's', color = 'red', label = f'{MOD_ORDER // 2} QAM, without INL')
+    if with_inl_32:
+        plt.plot(snr_arr, nmse_final_arr_with_inl_32_qam, marker = 's', color = 'blue', label = f'{MOD_ORDER // 2} QAM, with INL {INL_VAL} LSB')
+    if predist_32_mlp:
+        plt.plot(snr_arr, nmse_final_arr_with_inl_32_qam_mlp, marker = 's', color = 'green', label = f'{MOD_ORDER // 2} QAM, with INL {INL_VAL} LSB + MLP')
+    if predist_32_kan:
+        pass
+    
     plt.legend()
     plt.ylabel('NSME')
     plt.xlabel('SNR')
-    plt.title(f'NMSE(SNR), {MOD_ORDER}/{64} QAM, INL {INL_VAL / INL_COEFF / 1.2} LSB')
+    plt.title(f'NMSE(SNR), {MOD_ORDER // 2}/{MOD_ORDER} QAM, INL {INL_VAL} LSB')
     plt.grid()
-    plt.savefig(f'NMSE(SNR)_{MOD_ORDER}_{64}_QAM_INL_{INL_VAL / INL_COEFF / 1.2}_LSB.png')
+    plot_name = f'NMSE(SNR)_{MOD_ORDER // 2}_{MOD_ORDER}_QAM_INL_{INL_VAL}_LSB.png'
+    file_path = os.path.join(folder_name, plot_name)
+    plt.savefig(file_path)
     plt.show()
-
+    exit()
+    for mod_order in [MOD_ORDER, MOD_ORDER // 2]:
+        plot_name = f'Constellation.png'
+    file_path = os.path.join(folder_name, plot_name)
     cf.constellation_plot(final_symbols_no_inl, MOD_ORDER, '5 bit DAC')
     cf.constellation_plot(final_symbols_with_inl, MOD_ORDER, f'5 bit DAC with INL {INL_VAL} LSB')
     #cf.constellation_plot(final_symbols_with_inl_predist, MOD_ORDER, f'5 bit DAC with INL {INL_VAL/ INL_COEFF} LSB and pre-distorter MLP')

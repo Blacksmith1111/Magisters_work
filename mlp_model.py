@@ -191,7 +191,7 @@ def main(train_en = 0, lsb = 2, mod_order = 64):
     # model = torch.compile(model)
     criterion = nn.MSELoss()
     lr = 3e-3
-    num_epochs = 50
+    num_epochs = 30
     optimizer = torch.optim.AdamW(model.parameters(), lr=lr)
     scheduler = torch.optim.lr_scheduler.ReduceLROnPlateau(
         optimizer, mode="min", factor=0.1, patience=5
@@ -231,7 +231,7 @@ def main(train_en = 0, lsb = 2, mod_order = 64):
 
 
 if __name__ == "__main__":
-    MOD_ORDER = 64
+    MOD_ORDER = 32
     LSB = 2
     TRAIN_EN = 1
     main(train_en = TRAIN_EN, lsb = LSB, mod_order = MOD_ORDER)
