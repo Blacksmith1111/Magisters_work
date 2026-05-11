@@ -400,7 +400,7 @@ def get_snr_from_ber(target_ber: float, snr_array: list, ber_array: list) -> flo
     return float(estimated_snr)
 
 def main():
-    TEST_MOD_ORDERS = [32, 64]
+    TEST_MOD_ORDERS = [64, 32]
     TEST_INL_VALS = [2, 4]
     
     # 'MLP', 'KAN', 'CNN'
@@ -492,76 +492,155 @@ def main():
         os.makedirs(folder_name, exist_ok=True)
 
     COLOR_MAP = {
-        'Ideal': 'red',
+        'Ideal':  'red',
         'No_DPD': 'blue',
-        'MLP': 'green',
-        'CNN': 'cyan',
-        'KAN': 'purple'
+        'MLP':    'green',
+        'CNN':    'cyan',
+        'KAN':    'purple'
     }
 
     FEC_LIMIT = 3.84e-3
 
-    for inl_val in TEST_INL_VALS:
-        
-        plt.figure(figsize=(12, 7))
-        for (m_order, i_val, m_name), data in results.items():
-            
-            if i_val == inl_val or m_name == 'Ideal':
-                
-                marker = 's' if m_order == 32 else 'o'
-                ls = '--' if m_order == 32 else '-'  
-                color = COLOR_MAP.get(m_name, 'black')
-                
-                if m_name == 'Ideal':
-                    label = f'{m_order}-QAM, Ideal (No INL)'
-                elif m_name == 'No_DPD':
-                    label = f'{m_order}-QAM, INL {inl_val} LSB'
-                else:
-                    label = f'{m_order}-QAM, INL {inl_val} LSB + {m_name}'
-                    
-                plt.plot(snr_arr, data['ber'], marker=marker, linestyle=ls, color=color, label=label)
+    fec_snr = {}
+    for (m_order, i_val, m_name), data in results.items():
+        snr_at_fec = get_snr_from_ber(FEC_LIMIT, snr_arr.tolist(), data['ber'].tolist())
+        fec_snr[(m_order, i_val, m_name)] = snr_at_fec
 
-        plt.axhline(y=FEC_LIMIT, color='red', linestyle=':', linewidth=2, label='FEC Limit (3.84e-3)')
-        
-        plt.legend(loc='upper right', fontsize=10)
-        plt.ylabel('BER')
-        plt.ylim(bottom=1e-5, top=1e-2)
-        plt.yscale('log')
-        plt.xlabel('SNR (dB)')
-        plt.title(f'BER vs SNR | 32-QAM & 64-QAM | INL {inl_val} LSB')
-        plt.grid(True, which="both", ls="--", alpha=0.7)
-        plt.tight_layout()
-        
-        file_path = os.path.join(folder_name, f'BER_Both_QAM_INL_{inl_val}LSB.png')
-        plt.savefig(file_path)
+    print("\n" + "=" * 70)
+    print(f"{'FEC PENALTY TABLE':^70}")
+    print(f"{'(SNR required at BER = 3.84e-3)':^70}")
+    print("=" * 70)
+    print(f"{'Modulation':<12} {'INL':>5} {'Case':<10} {'SNR@FEC':>10} {'Penalty':>10}")
+    print("-" * 70)
+    for mod_order in TEST_MOD_ORDERS:
+        ideal_snr = fec_snr.get((mod_order, 0, 'Ideal'), np.nan)
+        for inl_val in TEST_INL_VALS:
+            for m_name in ['No_DPD'] + MODELS_TO_TEST:
+                snr_val = fec_snr.get((mod_order, inl_val, m_name), np.nan)
+                penalty = snr_val - ideal_snr if not np.isnan(snr_val) else np.nan
+                penalty_str = f"+{penalty:.2f} dB" if not np.isnan(penalty) else "N/A"
+                snr_str     = f"{snr_val:.2f} dB"  if not np.isnan(snr_val) else "N/A"
+                print(f"{mod_order}-QAM      {inl_val:>5} {m_name:<10} {snr_str:>10} {penalty_str:>10}")
+        print("-" * 70)
+
+    # ── Графики BER + NMSE + Penalty bar-chart ─────────────────────────────
+    for inl_val in TEST_INL_VALS:
+
+        # --- BER plot с аннотациями penalty ----------------------------------
+        fig, ax = plt.subplots(figsize=(13, 8))
+
+        for (m_order, i_val, m_name), data in results.items():
+            if not (i_val == inl_val or m_name == 'Ideal'):
+                continue
+
+            marker = 's' if m_order == 32 else 'o'
+            ls     = '--' if m_order == 32 else '-'
+            color  = COLOR_MAP.get(m_name, 'black')
+
+            ideal_snr = fec_snr.get((m_order, 0, 'Ideal'), np.nan)
+            snr_val   = fec_snr.get((m_order, i_val, m_name), np.nan)
+            penalty   = snr_val - ideal_snr
+
+            if m_name == 'Ideal':
+                label = f'{m_order}-QAM  Ideal (No INL) | SNR@FEC={snr_val:.1f} dB'
+            elif m_name == 'No_DPD':
+                label = (f'{m_order}-QAM  INL {inl_val} LSB | '
+                         f'SNR@FEC={snr_val:.1f} dB  Penalty=+{penalty:.1f} dB')
+            else:
+                label = (f'{m_order}-QAM  INL {inl_val} LSB + {m_name} | '
+                         f'SNR@FEC={snr_val:.1f} dB  Penalty=+{penalty:.1f} dB')
+
+            ax.plot(snr_arr, data['ber'],
+                    marker=marker, linestyle=ls, color=color, label=label)
+
+            if not np.isnan(snr_val):
+                ax.axvline(x=snr_val, color=color,
+                           linestyle=':', linewidth=1.2, alpha=0.55)
+
+        ax.axhline(y=FEC_LIMIT, color='black', linestyle=':', linewidth=2,
+                   label=f'FEC Limit ({FEC_LIMIT:.2e})')
+
+        ax.set_yscale('log')
+        ax.set_ylim(bottom=1e-5, top=1e-2)
+        ax.set_xlabel('SNR (dB)', fontsize=12)
+        ax.set_ylabel('BER', fontsize=12)
+        ax.set_title(f'BER vs SNR | 32-QAM & 64-QAM | INL {inl_val} LSB', fontsize=13)
+        ax.legend(loc='upper right', fontsize=9)
+        ax.grid(True, which='both', ls='--', alpha=0.6)
+        fig.tight_layout()
+        fig.savefig(os.path.join(folder_name, f'BER_Both_QAM_INL_{inl_val}LSB.png'), dpi=150)
         plt.show()
 
-        plt.figure(figsize=(12, 7))
-        for (m_order, i_val, m_name), data in results.items():
-            if i_val == inl_val or m_name == 'Ideal':
-                
-                marker = 's' if m_order == 32 else 'o'
-                ls = '--' if m_order == 32 else '-'
-                color = COLOR_MAP.get(m_name, 'black')
-                
-                if m_name == 'Ideal':
-                    label = f'{m_order}-QAM, Ideal (No INL)'
-                elif m_name == 'No_DPD':
-                    label = f'{m_order}-QAM, INL {inl_val} LSB'
-                else:
-                    label = f'{m_order}-QAM, INL {inl_val} LSB + {m_name}'
-                    
-                plt.plot(snr_arr, data['nmse'], marker=marker, linestyle=ls, color=color, label=label)
+        fig2, ax2 = plt.subplots(figsize=(13, 7))
 
-        plt.legend(loc='upper right', fontsize=10)
-        plt.ylabel('NMSE (dB)')
-        plt.xlabel('SNR (dB)')
-        plt.title(f'NMSE vs SNR | 32-QAM & 64-QAM | INL {inl_val} LSB')
-        plt.grid(True, ls="--", alpha=0.7)
-        plt.tight_layout()
-        
-        file_path = os.path.join(folder_name, f'NMSE_Both_QAM_INL_{inl_val}LSB.png')
-        plt.savefig(file_path)
+        for (m_order, i_val, m_name), data in results.items():
+            if not (i_val == inl_val or m_name == 'Ideal'):
+                continue
+
+            marker = 's' if m_order == 32 else 'o'
+            ls = '--' if m_order == 32 else '-'
+            color = COLOR_MAP.get(m_name, 'black')
+
+            if m_name == 'Ideal':
+                label = f'{m_order}-QAM  Ideal (No INL)'
+            elif m_name == 'No_DPD':
+                label = f'{m_order}-QAM  INL {inl_val} LSB'
+            else:
+                label = f'{m_order}-QAM  INL {inl_val} LSB + {m_name}'
+
+            ax2.plot(snr_arr, data['nmse'],
+                     marker=marker, linestyle=ls, color=color, label=label)
+
+        ax2.set_xlabel('SNR (dB)', fontsize=12)
+        ax2.set_ylabel('NMSE (dB)', fontsize=12)
+        ax2.set_title(f'NMSE vs SNR | 32-QAM & 64-QAM | INL {inl_val} LSB', fontsize=13)
+        ax2.legend(loc='upper right', fontsize=9)
+        ax2.grid(True, ls='--', alpha=0.6)
+        fig2.tight_layout()
+        fig2.savefig(os.path.join(folder_name, f'NMSE_Both_QAM_INL_{inl_val}LSB.png'), dpi=150)
+        plt.show()
+
+        # --- Penalty bar-chart -----------------------------------------------
+        fig3, axes = plt.subplots(1, len(TEST_MOD_ORDERS),
+                                  figsize=(6 * len(TEST_MOD_ORDERS), 6), sharey=False)
+        if len(TEST_MOD_ORDERS) == 1:
+            axes = [axes]
+
+        for ax3, mod_order in zip(axes, TEST_MOD_ORDERS):
+            ideal_snr = fec_snr.get((mod_order, 0, 'Ideal'), np.nan)
+            cases  = ['No_DPD'] + MODELS_TO_TEST
+            labels = [f'No DPD'] + MODELS_TO_TEST
+            penalties = []
+            bar_colors = []
+            for case in cases:
+                snr_val = fec_snr.get((mod_order, inl_val, case), np.nan)
+                pen = snr_val - ideal_snr if not np.isnan(snr_val) else 0.0
+                penalties.append(pen)
+                bar_colors.append(COLOR_MAP.get(case, 'grey'))
+
+            bars = ax3.bar(labels, penalties, color=bar_colors, edgecolor='black',
+                           linewidth=0.8, width=0.5)
+
+            # Подписи значений над/под барами
+            for bar, pen in zip(bars, penalties):
+                ypos = bar.get_height() + 0.03 if pen >= 0 else bar.get_height() - 0.15
+                ax3.text(bar.get_x() + bar.get_width() / 2, ypos,
+                         f'+{pen:.2f} dB' if pen >= 0 else f'{pen:.2f} dB',
+                         ha='center', va='bottom', fontsize=10, fontweight='bold')
+
+            ax3.axhline(0, color='red', linewidth=1.2, linestyle='--', alpha=0.7)
+            ax3.set_title(f'{mod_order}-QAM | INL {inl_val} LSB', fontsize=12)
+            ax3.set_ylabel('FEC Penalty (dB)', fontsize=11)
+            ax3.set_xlabel('Predistorter', fontsize=11)
+            ax3.grid(axis='y', ls='--', alpha=0.5)
+
+        fig3.suptitle(
+            f'FEC Penalty vs Predistorter | INL {inl_val} LSB\n'
+            f'(SNR relative to ideal, BER = {FEC_LIMIT:.2e})',
+            fontsize=13
+        )
+        fig3.tight_layout()
+        fig3.savefig(os.path.join(folder_name, f'FEC_Penalty_INL_{inl_val}LSB.png'), dpi=150)
         plt.show()
 
 
