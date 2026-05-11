@@ -9,7 +9,7 @@ from mlp_model import MLP_model, inference
 from efficient_kan_model import inference_kan, KAN_model
 from concurrent.futures import ProcessPoolExecutor, as_completed
 import os
-from cnn_model import CNN_DPD_Micro, inference_cnn
+from cnn_duplicate import CNN_DPD_Micro, inference_cnn
 
 
 DEVICE = 'cuda:0'
@@ -20,27 +20,30 @@ model_cnn = CNN_DPD_Micro().to(DEVICE)
 ### 64 QAM weights
 WEIGHTS_FILE_64_QAM_MLP_2_LSB = 'qam_64_mlp_2_LSB_weights.pt'
 WEIGHTS_FILE_64_QAM_KAN_2_LSB = 'qam_64_kan_2_LSB_weights.pt'
+WEIGHTS_FILE_64_QAM_CNN_2_LSB = 'qam_64_cnn_2_LSB_weights.pt'
 WEIGHTS_FILE_64_QAM_MLP_4_LSB = 'qam_64_mlp_4_LSB_weights.pt'
 WEIGHTS_FILE_64_QAM_KAN_4_LSB = 'qam_64_kan_4_lsb_weights.pt'
-WEIGHTS_FILE_64_QAM_CNN_2_LSB = 'qam_64_cnn_2_LSB_weights.pt'
+WEIGHTS_FILE_64_QAM_CNN_4_LSB = 'qam_64_cnn_4_LSB_weights.pt'
+
 ### 32 QAM weights
 WEIGHTS_FILE_32_QAM_MLP_2_LSB = 'qam_32_mlp_2_LSB_weights.pt'
 WEIGHTS_FILE_32_QAM_MLP_4_LSB = 'qam_32_mlp_4_LSB_weights.pt'
 WEIGHTS_FILE_32_QAM_KAN_2_LSB = 'qam_32_kan_2_LSB_weights.pt'
 WEIGHTS_FILE_32_QAM_KAN_4_LSB = 'qam_32_kan_4_LSB_weights.pt'
 WEIGHTS_FILE_32_QAM_CNN_2_LSB = 'qam_32_cnn_2_LSB_weights.pt'
+WEIGHTS_FILE_32_QAM_CNN_4_LSB = 'qam_32_cnn_4_LSB_weights.pt'
 
 
 SIMULATION_WEIGHTS = {
     64: {
         'MLP': {2: WEIGHTS_FILE_64_QAM_MLP_2_LSB, 4: WEIGHTS_FILE_64_QAM_MLP_4_LSB},
         'KAN': {2: WEIGHTS_FILE_64_QAM_KAN_2_LSB, 4: WEIGHTS_FILE_64_QAM_KAN_4_LSB},
-        'CNN': {2: WEIGHTS_FILE_64_QAM_CNN_2_LSB}
+        'CNN': {2: WEIGHTS_FILE_64_QAM_CNN_2_LSB, 4: WEIGHTS_FILE_64_QAM_CNN_4_LSB} 
     },
     32: {
         'MLP': {2: WEIGHTS_FILE_32_QAM_MLP_2_LSB, 4: WEIGHTS_FILE_32_QAM_MLP_4_LSB},
         'KAN': {2: WEIGHTS_FILE_32_QAM_KAN_2_LSB, 4: WEIGHTS_FILE_32_QAM_KAN_4_LSB},
-        'CNN': {2: WEIGHTS_FILE_32_QAM_CNN_2_LSB}
+        'CNN': {2: WEIGHTS_FILE_32_QAM_CNN_2_LSB, 4: WEIGHTS_FILE_32_QAM_CNN_4_LSB}
     }
 }
 
@@ -164,18 +167,17 @@ def generate_tx_base(bits_num, mod_order, sps, rolloff, filter_span, fs, ts, deb
                 weights_file = SIMULATION_WEIGHTS[mod_order]['MLP'][inl_val]) 
             print(SIMULATION_WEIGHTS[mod_order]['MLP'][inl_val])
         elif model_apply == 2:
-            #current_max = np.max(np.abs(shaped_normalized))
-            current_max = max(np.max(np.abs(shaped_normalized.real)), np.max(np.abs(shaped_normalized.imag)))
+            current_max = max(np.max(np.abs(shaped_normalized.real)),
+                            np.max(np.abs(shaped_normalized.imag)))
             print(f'With KAN current max is {current_max}')
             prediction = inference_kan(
-                shaped_normalized, 
-                batch_size=8192, 
-                model = model_kan, 
-                device = DEVICE, 
-                weights_file = SIMULATION_WEIGHTS[mod_order]['KAN'][inl_val],
-                max_val = current_max#2.024
+                shaped_normalized,
+                batch_size=8192,
+                model=model_kan,
+                device=DEVICE,
+                weights_file=SIMULATION_WEIGHTS[mod_order]['KAN'][inl_val],
+                max_val=current_max
             )
-            
             print(SIMULATION_WEIGHTS[mod_order]['KAN'][inl_val])
         elif model_apply == 3:
              
@@ -398,252 +400,170 @@ def get_snr_from_ber(target_ber: float, snr_array: list, ber_array: list) -> flo
     return float(estimated_snr)
 
 def main():
-    # Parameters
-    BITS_NUM = 12_000_00 #6_000_000
-    MOD_ORDER = 64
-    F_SYM = 10e3 # FS / SPS
-    FS = 10e3 # for SPS = 1 !!!
+    TEST_MOD_ORDERS = [32, 64]
+    TEST_INL_VALS = [2, 4]
+    
+    # 'MLP', 'KAN', 'CNN'
+    MODELS_TO_TEST = ['CNN', 'MLP', 'KAN']         
+    
+    RUN_NO_INL = 1  #True              
+    RUN_WITH_INL = True
+    
+    BITS_NUM = 1_200_000            
+    F_SYM = 10e3 # (FS / SPS)
+    FS = 10e3  # SPS = 1
     SPS = 2
     SPS_2 = 10 * 2
     TS = 1 / F_SYM
-    ROLLOFF = 0.2 #0.125
+    ROLLOFF = 0.2 
     FILTER_SPAN = 64
     DATA_SAVE = 0
     DEBUG_CHECK = 0
-    INL_VAL = 2
-
-    predist_64_mlp = 0
-    predist_64_kan = 0
-    with_inl_64 = 0
-    without_inl_64 = 0
-    initial_64_qam = 0
-    
-    predist_32_mlp = 1
-    predist_32_kan = 1
-    with_inl_32 = 1
-    without_inl_32 = 1
-    initial_32_qam = 1
-
     SEED = 100
     snr_arr = np.arange(14, 30, 1)
 
+    GAINS = {
+        64: {'dac': 15 / 9, 'adc': 127 / 15},
+        32: {'dac': 2.2,    'adc': 127 / 15}
+    }
 
-    if initial_64_qam:
-            ### Without pre-distorter
-            bits, qam, symbol_signal, up_signal, shaped_signal = generate_tx_base(bits_num = BITS_NUM, mod_order = MOD_ORDER, sps = SPS,
-                    rolloff = ROLLOFF, filter_span = FILTER_SPAN, fs = FS, ts = TS, debug_check = DEBUG_CHECK, data_save = DATA_SAVE, model_apply = 0, seed = SEED)
-     
-    gains = np.linspace(14, 18, 50)
-    bers_dac_64_qam = []
-    bers_dac_32_qam = []
-    nmse_dac_64_qam = []
-    nmse_dac_32_qam = []
+    MODEL_FLAGS = {'MLP': 1, 'KAN': 2, 'CNN': 3}
+    
+    results = {}
 
-    #for g in gains:
-    DAC_GAIN_64_QAM = 15 / 9 #2.2 #* 0.8#2.05 * 0.75 #2.265
-    ADC_GAIN_64_QAM = 127 / 15 #0#10 * 0.75# 20.5
-
-    if without_inl_64:
-        ### Simulation without INL
-        bers_no_inl_64_qam, nmse_final_arr_no_inl_64_qam, final_symbols_64_qam_no_inl, dac_gain, adc_gain = simulate_channel_and_rx(bits, qam,
-                            shaped_signal, up_signal, symbol_signal, 
-                            snr_arr, inl_en = 0, dac_gain = DAC_GAIN_64_QAM, adc_gain = ADC_GAIN_64_QAM, sps = SPS,
-                            sps_2 = SPS_2, fs = FS,
-                            rolloff = ROLLOFF, filter_span = FILTER_SPAN,
-                            ts = TS, mod_order = MOD_ORDER, debug_check = DEBUG_CHECK, noise_en = 1, data_save = 0)
-            #bers_dac_64_qam.append(bers_no_inl_64_qam)
-            #nmse_dac_64_qam.append(nmse_final_arr_no_inl_64_qam)
-
-    if with_inl_64:
-        #DAC_GAIN_64_QAM *= 0.8
-        #ADC_GAIN_64_QAM *= 0.5
-        ### Simulation with INL
-        bers_with_inl_64_qam, nmse_final_arr_with_inl_64_qam, final_symbols_64_qam_with_inl, _, _ = simulate_channel_and_rx(bits, qam, shaped_signal,
-                up_signal, symbol_signal, 
-                snr_arr, inl_en = INL_VAL, dac_gain = DAC_GAIN_64_QAM, adc_gain = ADC_GAIN_64_QAM, 
-                sps = SPS, sps_2 = SPS_2, fs = FS,
-                rolloff = ROLLOFF, filter_span = FILTER_SPAN,
-                ts = TS, mod_order = MOD_ORDER, debug_check = DEBUG_CHECK, 
-                noise_en = 1, data_save = DATA_SAVE)
-
-    if predist_64_mlp:
-        ### With pre-distorter MLP
-        bits, qam, symbol_signal, up_signal, shaped_signal = generate_tx_base(bits_num = BITS_NUM, mod_order = MOD_ORDER, sps = SPS,
-                rolloff = ROLLOFF, filter_span = FILTER_SPAN, fs = FS, ts = TS, debug_check = 0, data_save = DATA_SAVE, model_apply = 1, inl_val = INL_VAL, seed = SEED)
+    for mod_order in TEST_MOD_ORDERS:
+        print(f"\n{'='*40}\nSTARTING SIMULATION FOR {mod_order}-QAM\n{'='*40}")
         
-        ### Simulation with INL and pre-distorter MLP
-        bers_with_inl_64_qam_mlp, nmse_final_arr_with_inl_64_qam_mlp, final_symbols_64_qam_with_inl_mlp, _, _ = simulate_channel_and_rx(bits, qam, shaped_signal, up_signal, symbol_signal, 
-            snr_arr, inl_en = INL_VAL, dac_gain = DAC_GAIN_64_QAM, adc_gain = ADC_GAIN_64_QAM, sps = SPS, sps_2 = SPS_2, fs = FS,
-            rolloff = ROLLOFF, filter_span = FILTER_SPAN,
-            ts = TS, mod_order = MOD_ORDER, debug_check = DEBUG_CHECK, noise_en = 1, data_save = DATA_SAVE)
+        dac_gain = GAINS[mod_order]['dac']
+        adc_gain = GAINS[mod_order]['adc']
 
+        if RUN_NO_INL:
+            print(f"\n>>> Running Baseline: NO INL ({mod_order}-QAM) <<<")
+            bits, qam, symbol_signal, up_signal, shaped_signal = generate_tx_base(
+                bits_num=BITS_NUM, mod_order=mod_order, sps=SPS, rolloff=ROLLOFF, 
+                filter_span=FILTER_SPAN, fs=FS, ts=TS, debug_check=DEBUG_CHECK, 
+                data_save=DATA_SAVE, model_apply=0, seed=SEED
+            )
+            bers, nmses, symbols, _, _ = simulate_channel_and_rx(
+                bits, qam, shaped_signal, up_signal, symbol_signal, snr_arr,
+                inl_en=0, dac_gain=dac_gain, adc_gain=adc_gain, sps=SPS, sps_2=SPS_2, fs=FS,
+                rolloff=ROLLOFF, filter_span=FILTER_SPAN, ts=TS, mod_order=mod_order, 
+                debug_check=DEBUG_CHECK, noise_en=1, data_save=DATA_SAVE
+            )
+            results[(mod_order, 0, 'Ideal')] = {'ber': bers, 'nmse': nmses}
 
-    '''### With pre-distorter KAN
-    bits, qam, symbol_signal, up_signal, shaped_signal = generate_tx_base(bits_num = BITS_NUM, mod_order = MOD_ORDER, sps = SPS,
-            rolloff = ROLLOFF, filter_span = FILTER_SPAN, fs = FS, ts = TS, debug_check = 0, data_save = DATA_SAVE, model_apply = 2, inl_val = INL_VAL)
-    
-    ### Simulation with INL and pre-distorter KAN
-    bers_with_inl_64_qam_kan, nmse_final_arr_with_inl_64_qam_kan, final_symbols_64_qam_with_inl_kan, _, _ = simulate_channel_and_rx(bits, qam, shaped_signal, up_signal, symbol_signal, 
-        snr_arr, inl_en = INL_VAL, dac_gain = DAC_GAIN, adc_gain = ADC_GAIN, sps = SPS, sps_2 = SPS_2, fs = FS,
-        rolloff = ROLLOFF, filter_span = FILTER_SPAN,
-        ts = TS, mod_order = MOD_ORDER, debug_check = DEBUG_CHECK, noise_en = 1, data_save = DATA_SAVE)'''
-    
-    if initial_32_qam:
-        ### Without pre-distorter 32 QAM
-        bits, qam, symbol_signal, up_signal, shaped_signal = generate_tx_base(bits_num = BITS_NUM, mod_order = MOD_ORDER // 2, sps = SPS,
-                rolloff = ROLLOFF, filter_span = FILTER_SPAN, fs = FS, ts = TS, debug_check = DEBUG_CHECK, data_save = DATA_SAVE, model_apply = 0, seed = SEED)
+        for inl_val in TEST_INL_VALS:
+            if RUN_WITH_INL:
+                print(f"\n>>> Running Baseline: WITH INL {inl_val} LSB ({mod_order}-QAM) <<<")
+                bits, qam, symbol_signal, up_signal, shaped_signal = generate_tx_base(
+                    bits_num=BITS_NUM, mod_order=mod_order, sps=SPS, rolloff=ROLLOFF, 
+                    filter_span=FILTER_SPAN, fs=FS, ts=TS, debug_check=DEBUG_CHECK, 
+                    data_save=DATA_SAVE, model_apply=0, seed=SEED
+                )
+                bers, nmses, symbols, _, _ = simulate_channel_and_rx(
+                    bits, qam, shaped_signal, up_signal, symbol_signal, snr_arr,
+                    inl_en=inl_val, dac_gain=dac_gain, adc_gain=adc_gain, sps=SPS, sps_2=SPS_2, fs=FS,
+                    rolloff=ROLLOFF, filter_span=FILTER_SPAN, ts=TS, mod_order=mod_order, 
+                    debug_check=DEBUG_CHECK, noise_en=1, data_save=DATA_SAVE
+                )
+                results[(mod_order, inl_val, 'No_DPD')] = {'ber': bers, 'nmse': nmses}
 
-    #for g in gains:
-    DAC_GAIN_32_QAM = 2.2 #* 0.9#3.3# * 0.8 #3 * 0.75 #3.2
-    ADC_GAIN_32_QAM = 127 / 15#0#20.5#10 * 0.75 #20.4 #20.5 # 20.5
-
-    if without_inl_32:
-        ### Simulation without INL
-        bers_no_inl_32_qam, nmse_final_arr_no_inl_32_qam, final_symbols_32_qam_no_inl, dac_gain, adc_gain = simulate_channel_and_rx(bits, qam, shaped_signal, up_signal, symbol_signal, 
-                        snr_arr, inl_en = 0, dac_gain = DAC_GAIN_32_QAM, adc_gain = ADC_GAIN_32_QAM, sps = SPS,
-                        sps_2 = SPS_2, fs = FS,
-                        rolloff = ROLLOFF, filter_span = FILTER_SPAN,
-                        ts = TS, mod_order = MOD_ORDER // 2, debug_check = DEBUG_CHECK, noise_en = 1)
-            #bers_dac_32_qam.append(bers_no_inl_32_qam)
-            #nmse_dac_32_qam.append(nmse_final_arr_no_inl_32_qam)
-
-    if with_inl_32:
-        ### Simulation with INL
-        bers_with_inl_32_qam, nmse_final_arr_with_inl_32_qam, final_symbols_32_qam_with_inl, _, _ = simulate_channel_and_rx(bits, qam, shaped_signal, up_signal, symbol_signal, 
-                snr_arr, inl_en = INL_VAL, dac_gain = DAC_GAIN_32_QAM, adc_gain = ADC_GAIN_32_QAM, 
-                sps = SPS, sps_2 = SPS_2, fs = FS,
-                rolloff = ROLLOFF, filter_span = FILTER_SPAN,
-                ts = TS, mod_order = MOD_ORDER // 2, debug_check = DEBUG_CHECK, 
-                noise_en = 1, data_save = DATA_SAVE)
-
-    if predist_32_mlp:
-        ### With pre-distorter MLP
-        bits, qam, symbol_signal, up_signal, shaped_signal = generate_tx_base(bits_num = BITS_NUM, mod_order = MOD_ORDER // 2, sps = SPS,
-                rolloff = ROLLOFF, filter_span = FILTER_SPAN, fs = FS, ts = TS, debug_check = 0, data_save = DATA_SAVE, model_apply = 1, inl_val = INL_VAL, seed = SEED)
-        
-        ### Simulation with INL and pre-distorter MLP
-        bers_with_inl_32_qam_mlp, nmse_final_arr_with_inl_32_qam_mlp, final_symbols_32_qam_with_inl_mlp, *_ = simulate_channel_and_rx(bits, qam, shaped_signal, up_signal, symbol_signal, 
-            snr_arr, inl_en = INL_VAL, dac_gain = DAC_GAIN_32_QAM, adc_gain = ADC_GAIN_32_QAM, sps = SPS, sps_2 = SPS_2, fs = FS,
-            rolloff = ROLLOFF, filter_span = FILTER_SPAN,
-            ts = TS, mod_order = MOD_ORDER // 2, debug_check = DEBUG_CHECK, noise_en = 1, data_save = DATA_SAVE)
-    
-    if predist_64_kan:
-        ### With pre-distorter KAN
-        bits, qam, symbol_signal, up_signal, shaped_signal = generate_tx_base(bits_num = BITS_NUM, mod_order = MOD_ORDER, sps = SPS,
-                rolloff = ROLLOFF, filter_span = FILTER_SPAN, fs = FS, ts = TS, debug_check = 0, data_save = DATA_SAVE, model_apply = 2, inl_val = INL_VAL)
-        
-        ### Simulation with INL and pre-distorter KAN
-        bers_with_inl_64_qam_kan, nmse_final_arr_with_inl_64_qam_kan, final_symbols_64_qam_with_inl_kan, _, _ = simulate_channel_and_rx(
-            bits, qam,
-            shaped_signal, up_signal, symbol_signal, 
-            snr_arr, inl_en = INL_VAL, dac_gain = DAC_GAIN_64_QAM, adc_gain = ADC_GAIN_64_QAM, sps = SPS, sps_2 = SPS_2, fs = FS,
-            rolloff = ROLLOFF, filter_span = FILTER_SPAN,
-            ts = TS, mod_order = MOD_ORDER, debug_check = DEBUG_CHECK, noise_en = 1, data_save = DATA_SAVE)
-        
-    if predist_32_kan:
-        ### With pre-distorter KAN
-        bits, qam, symbol_signal, up_signal, shaped_signal = generate_tx_base(bits_num = BITS_NUM, mod_order = MOD_ORDER // 2, sps = SPS,
-                rolloff = ROLLOFF, filter_span = FILTER_SPAN, fs = FS, ts = TS, debug_check = 0, data_save = DATA_SAVE, model_apply = 3, inl_val = INL_VAL)
-        
-        ### Simulation with INL and pre-distorter KAN
-        bers_with_inl_32_qam_kan, nmse_final_arr_with_inl_32_qam_kan, final_symbols_32_qam_with_inl_kan, _, _ = simulate_channel_and_rx(
-            bits, qam, shaped_signal, up_signal, symbol_signal, 
-            snr_arr, inl_en = INL_VAL, dac_gain = DAC_GAIN_32_QAM, adc_gain = ADC_GAIN_32_QAM, sps = SPS, sps_2 = SPS_2, fs = FS,
-            rolloff = ROLLOFF, filter_span = FILTER_SPAN,
-            ts = TS, mod_order = MOD_ORDER // 2, debug_check = DEBUG_CHECK, noise_en = 1, data_save = DATA_SAVE)
-        
-    
-
-    DC = 'ADC_no_work_point'
-    #ber_gain_plot(bers_dac_64_qam, nmse_dac_64_qam, gains, mod_order = MOD_ORDER, title = f'BER(gain) in {DC}', title1 = f'NMSE(gain) in {DC}')
-    #ber_gain_plot(bers_dac_32_qam, nmse_dac_32_qam, gains, mod_order = MOD_ORDER // 2, title = f'BER(gain) in {DC}', title1 = f'NMSE(gain) in {DC}')
-    
-    FEC_LIMIT = 3.84e-3
-    
-    '''snr_ideal_32 = get_snr_from_ber(FEC_LIMIT, snr_arr, bers_no_inl_32_qam)
-    snr_ideal_64 = get_snr_from_ber(FEC_LIMIT, snr_arr, bers_no_inl_64_qam)
-
-    snr_distorted_32 = get_snr_from_ber(FEC_LIMIT, snr_arr, bers_with_inl_32_qam)
-    snr_distorted_64 = get_snr_from_ber(FEC_LIMIT, snr_arr, bers_with_inl_64_qam)
-    
-    penalty_32 = snr_distorted_32 - snr_ideal_32
-    penalty_64 = snr_distorted_64 - snr_ideal_64
-    print(f"Penalty on FEC 32 QAM = {FEC_LIMIT}: {penalty_32:.2f} dB")
-    print(f"Penalty on FEC 64 QAM = {FEC_LIMIT}: {penalty_64:.2f} dB")'''
+            for model_name in MODELS_TO_TEST:
+                print(f"\n>>> Running Model: {model_name} | INL {inl_val} LSB ({mod_order}-QAM) <<<")
+                
+                bits, qam, symbol_signal, up_signal, shaped_signal = generate_tx_base(
+                    bits_num=BITS_NUM, mod_order=mod_order, sps=SPS, rolloff=ROLLOFF, 
+                    filter_span=FILTER_SPAN, fs=FS, ts=TS, debug_check=DEBUG_CHECK, 
+                    data_save=DATA_SAVE, model_apply=MODEL_FLAGS[model_name], 
+                    inl_val=inl_val, seed=SEED
+                )
+                
+                bers, nmses, symbols, _, _ = simulate_channel_and_rx(
+                    bits, qam, shaped_signal, up_signal, symbol_signal, snr_arr,
+                    inl_en=inl_val, dac_gain=dac_gain, adc_gain=adc_gain, sps=SPS, sps_2=SPS_2, fs=FS,
+                    rolloff=ROLLOFF, filter_span=FILTER_SPAN, ts=TS, mod_order=mod_order, 
+                    debug_check=DEBUG_CHECK, noise_en=1, data_save=DATA_SAVE
+                )
+                results[(mod_order, inl_val, model_name)] = {'ber': bers, 'nmse': nmses}
 
 
     folder_name = 'Pictures'
     if not os.path.exists(folder_name):
-        os.makedirs(folder_name, exist_ok = True)
+        os.makedirs(folder_name, exist_ok=True)
 
-    plt.figure(10)
-    if without_inl_64:
-        plt.plot(snr_arr, bers_no_inl_64_qam, marker = 'o', color = 'red', label = f'{MOD_ORDER} QAM, without INL')
-    if with_inl_64:
-        plt.plot(snr_arr, bers_with_inl_64_qam, marker = 'o', color = 'blue', label = f'{MOD_ORDER} QAM, with INL {INL_VAL} LSB')
-    if predist_64_mlp:
-        plt.plot(snr_arr, bers_with_inl_64_qam_mlp, marker = 'o', color = 'green', label = f'{MOD_ORDER} QAM, with INL {INL_VAL} LSB + MLP')
-    if predist_64_kan:
-        plt.plot(snr_arr, bers_with_inl_64_qam_kan, marker = 'o', color = 'purple', label = f'{MOD_ORDER} QAM, with INL {INL_VAL} LSB + KAN')
+    COLOR_MAP = {
+        'Ideal': 'red',
+        'No_DPD': 'blue',
+        'MLP': 'green',
+        'CNN': 'cyan',
+        'KAN': 'purple'
+    }
 
-    if without_inl_32:
-        plt.plot(snr_arr, bers_no_inl_32_qam, marker = 's', color = 'red', label = f'{MOD_ORDER // 2} QAM, without INL')
-    if with_inl_32:
-        plt.plot(snr_arr, bers_with_inl_32_qam, marker = 's', color = 'blue', label = f'{MOD_ORDER // 2} QAM, with INL {INL_VAL} LSB')
-    if predist_32_mlp:
-        plt.plot(snr_arr, bers_with_inl_32_qam_mlp, marker = 's', color = 'green', label = f'{MOD_ORDER // 2} QAM, with INL {INL_VAL} LSB + MLP')
-    if predist_32_kan:
-        plt.plot(snr_arr, bers_with_inl_32_qam_kan, marker = 's', color = 'purple', label = f'{MOD_ORDER // 2} QAM, with INL {INL_VAL} LSB + KAN')
+    FEC_LIMIT = 3.84e-3
 
-    plt.legend()
-    plt.ylabel('BER')
-    plt.ylim(bottom = 1e-5, top = 1e-2)
-    plt.axhline(y = FEC_LIMIT, color = 'red', linestyle = '--')
-    plt.yscale('log')
-    plt.xlabel('SNR')
-    plt.title(f'BER(SNR), {MOD_ORDER // 2}/{MOD_ORDER} QAM, INL {INL_VAL} LSB')
-    plt.grid()
-    plot_name = f'BER(SNR)_{MOD_ORDER // 2}_{MOD_ORDER}_QAM_INL_{INL_VAL}_LSB.png'
-    file_path = os.path.join(folder_name, plot_name)
-    plt.savefig(file_path)
-    plt.show()
+    for inl_val in TEST_INL_VALS:
+        
+        plt.figure(figsize=(12, 7))
+        for (m_order, i_val, m_name), data in results.items():
+            
+            if i_val == inl_val or m_name == 'Ideal':
+                
+                marker = 's' if m_order == 32 else 'o'
+                ls = '--' if m_order == 32 else '-'  
+                color = COLOR_MAP.get(m_name, 'black')
+                
+                if m_name == 'Ideal':
+                    label = f'{m_order}-QAM, Ideal (No INL)'
+                elif m_name == 'No_DPD':
+                    label = f'{m_order}-QAM, INL {inl_val} LSB'
+                else:
+                    label = f'{m_order}-QAM, INL {inl_val} LSB + {m_name}'
+                    
+                plt.plot(snr_arr, data['ber'], marker=marker, linestyle=ls, color=color, label=label)
 
-    plt.figure(11)
-    if without_inl_64:
-        plt.plot(snr_arr, nmse_final_arr_no_inl_64_qam, marker = 'o', color = 'red', label = f'{64} QAM, without INL')
-    if with_inl_64:
-        plt.plot(snr_arr, nmse_final_arr_with_inl_64_qam, marker = 'o', color = 'blue', label = f'{64} QAM, with INL {INL_VAL} LSB')
-    if predist_64_mlp:
-        plt.plot(snr_arr, nmse_final_arr_with_inl_64_qam_mlp, marker = 'o', color = 'green', label = f'{MOD_ORDER} QAM, with INL {INL_VAL} LSB + MLP')
-    if predist_64_kan:
-        pass
+        plt.axhline(y=FEC_LIMIT, color='red', linestyle=':', linewidth=2, label='FEC Limit (3.84e-3)')
+        
+        plt.legend(loc='upper right', fontsize=10)
+        plt.ylabel('BER')
+        plt.ylim(bottom=1e-5, top=1e-2)
+        plt.yscale('log')
+        plt.xlabel('SNR (dB)')
+        plt.title(f'BER vs SNR | 32-QAM & 64-QAM | INL {inl_val} LSB')
+        plt.grid(True, which="both", ls="--", alpha=0.7)
+        plt.tight_layout()
+        
+        file_path = os.path.join(folder_name, f'BER_Both_QAM_INL_{inl_val}LSB.png')
+        plt.savefig(file_path)
+        plt.show()
 
-    if without_inl_32:
-        plt.plot(snr_arr, nmse_final_arr_no_inl_32_qam, marker = 's', color = 'red', label = f'{MOD_ORDER // 2} QAM, without INL')
-    if with_inl_32:
-        plt.plot(snr_arr, nmse_final_arr_with_inl_32_qam, marker = 's', color = 'blue', label = f'{MOD_ORDER // 2} QAM, with INL {INL_VAL} LSB')
-    if predist_32_mlp:
-        plt.plot(snr_arr, nmse_final_arr_with_inl_32_qam_mlp, marker = 's', color = 'green', label = f'{MOD_ORDER // 2} QAM, with INL {INL_VAL} LSB + MLP')
-    if predist_32_kan:
-        pass
-    
-    plt.legend()
-    plt.ylabel('NSME')
-    plt.xlabel('SNR')
-    plt.title(f'NMSE(SNR), {MOD_ORDER // 2}/{MOD_ORDER} QAM, INL {INL_VAL} LSB')
-    plt.grid()
-    plot_name = f'NMSE(SNR)_{MOD_ORDER // 2}_{MOD_ORDER}_QAM_INL_{INL_VAL}_LSB.png'
-    file_path = os.path.join(folder_name, plot_name)
-    plt.savefig(file_path)
-    plt.show()
-    exit()
-    for mod_order in [MOD_ORDER, MOD_ORDER // 2]:
-        plot_name = f'Constellation.png'
-    file_path = os.path.join(folder_name, plot_name)
-    cf.constellation_plot(final_symbols_no_inl, MOD_ORDER, '5 bit DAC')
-    cf.constellation_plot(final_symbols_with_inl, MOD_ORDER, f'5 bit DAC with INL {INL_VAL} LSB')
-    #cf.constellation_plot(final_symbols_with_inl_predist, MOD_ORDER, f'5 bit DAC with INL {INL_VAL/ INL_COEFF} LSB and pre-distorter MLP')
-    #cf.constellation_plot(final_symbols_with_inl_predist_kan, MOD_ORDER, f'5 bit DAC with INL {INL_VAL/ INL_COEFF} LSB pre-distorter KAN')
+        plt.figure(figsize=(12, 7))
+        for (m_order, i_val, m_name), data in results.items():
+            if i_val == inl_val or m_name == 'Ideal':
+                
+                marker = 's' if m_order == 32 else 'o'
+                ls = '--' if m_order == 32 else '-'
+                color = COLOR_MAP.get(m_name, 'black')
+                
+                if m_name == 'Ideal':
+                    label = f'{m_order}-QAM, Ideal (No INL)'
+                elif m_name == 'No_DPD':
+                    label = f'{m_order}-QAM, INL {inl_val} LSB'
+                else:
+                    label = f'{m_order}-QAM, INL {inl_val} LSB + {m_name}'
+                    
+                plt.plot(snr_arr, data['nmse'], marker=marker, linestyle=ls, color=color, label=label)
+
+        plt.legend(loc='upper right', fontsize=10)
+        plt.ylabel('NMSE (dB)')
+        plt.xlabel('SNR (dB)')
+        plt.title(f'NMSE vs SNR | 32-QAM & 64-QAM | INL {inl_val} LSB')
+        plt.grid(True, ls="--", alpha=0.7)
+        plt.tight_layout()
+        
+        file_path = os.path.join(folder_name, f'NMSE_Both_QAM_INL_{inl_val}LSB.png')
+        plt.savefig(file_path)
+        plt.show()
+
 
 if __name__ == "__main__":
     main()

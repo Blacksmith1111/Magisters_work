@@ -20,12 +20,12 @@ MLP_model = nn.Sequential(
     nn.Linear(10, 10),
     #nn.LeakyReLU(),
     nn.Tanh(),
-    nn.Linear(10, 10),
+    #nn.Linear(10, 10),
     #nn.LeakyReLU(),
-    nn.Tanh(),
-    nn.Linear(10, 10),
+    #nn.Tanh(),
+    #nn.Linear(10, 10),
     #nn.LeakyReLU(),
-    nn.Tanh(),
+    #nn.Tanh(),
     nn.Linear(10, 2),
 )
 
@@ -231,7 +231,7 @@ def main(train_en = 0, lsb = 2, mod_order = 64):
 
 
 if __name__ == "__main__":
-    MOD_ORDER = 32
-    LSB = 2
+    MOD_ORDER = 64
+    LSB = 4
     TRAIN_EN = 1
     main(train_en = TRAIN_EN, lsb = LSB, mod_order = MOD_ORDER)
