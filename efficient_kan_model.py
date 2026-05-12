@@ -5,39 +5,33 @@ from torch.utils.data import TensorDataset, DataLoader
 from tqdm import tqdm
 import matplotlib.pyplot as plt
 from efficient_kan import KAN
+from itertools import product
 
 DEVICE = "cuda:0" if torch.cuda.is_available() else "cpu"
 
 WINDOW_SIZE = 1
-INPUT_DIM   = 2 * WINDOW_SIZE  # I и Q вместе
+INPUT_DIM   = 2 * WINDOW_SIZE
 
-# ============================================================
-# КОНФИГУРАЦИИ KAN — выбери одну, раскомментировав нужную
-# MLP из статьи (референс): [1,10,10,10,10,1] ≈ 361 параметров
-# ============================================================
+'''class KAN_DPD(nn.Module):
+    def __init__(self):
+        super().__init__()
+        self.kan = KAN(layers_hidden=[INPUT_DIM, 4, 2],
+                       grid_size=10,
+                       spline_order=3,
+                       grid_range=[-1.2, 1.2])
+    
+    def forward(self, x):
+        return x + self.kan(x)
 
-# 1. Рекомендуемая: ~434 пар. Видит перекрёстные I/Q зависимости.
+KAN_model = KAN_DPD()'''
+
 KAN_model = KAN(layers_hidden=[INPUT_DIM, 4, 2],
-                grid_size=5,
+                grid_size=10,
                 spline_order=3,
                 grid_range=[-1.2, 1.2])
 
-# 2. Компактная: ~330 пар. (0.91× от MLP) — строго меньше их MLP.
-# KAN_model = KAN(layers_hidden=[INPUT_DIM, 6, 2],
-#                 grid_size=7,
-#                 spline_order=3,
-#                 grid_range=[-1.2, 1.2])
-
-# 3. Почти равна MLP по параметрам: ~370 пар.
-# KAN_model = KAN(layers_hidden=[INPUT_DIM, 8, 2],
-#                 grid_size=5,
-#                 spline_order=3,
-#                 grid_range=[-1.2, 1.2])
-# ============================================================
-
 
 def create_windows(data, window_size):
-    """data: shape (N, D), возвращает (N, window_size * D)"""
     dim = data.shape[1]
     pad_size = window_size // 2
     padded_data = np.pad(data, ((pad_size, pad_size), (0, 0)), mode='edge')
@@ -48,10 +42,9 @@ def create_windows(data, window_size):
 
 
 def data_prepare(objects, targets, window_size, batch_size=64):
-    """objects/targets: shape (N, 2). Возвращает даталоадеры."""
+
     objects_win = create_windows(objects, window_size)
 
-    # Блочный сплит — правильнее для временных сигналов
     split_idx = int(len(objects_win) * 0.9)
     x_train, x_test = objects_win[:split_idx], objects_win[split_idx:]
     y_train, y_test = targets[:split_idx],     targets[split_idx:]
@@ -122,37 +115,27 @@ def test(model, test_data, criterion_test):
 
 
 def plot_comparison(x_raw, preds, targets, max_val, n=300):
-    """
-    Сравнительный график: входной сигнал (до модели),
-    предсказание модели и таргет.
 
-    x_raw   : shape (N, 2*WINDOW_SIZE) — нормализованный вход теста
-    preds   : shape (N, 2) — выход модели, денормализованный
-    targets : shape (N, 2) — таргет, денормализованный
-    """
-    # Берём только первые два столбца (I и Q без возможных padding'ов окна)
     raw_i = x_raw[:n, 0] * max_val
     raw_q = x_raw[:n, 1] * max_val if x_raw.shape[1] >= 2 else x_raw[:n, 0] * max_val
 
     fig, axes = plt.subplots(2, 1, figsize=(12, 7), sharex=True)
     t = np.arange(n)
 
-    # I-канал
-    axes[0].plot(t, raw_i,          label="До модели (вход)",  alpha=0.7, linestyle='--', color='tab:blue')
-    axes[0].plot(t, preds[:n, 0],   label="После модели (KAN)", alpha=0.9, color='tab:green')
-    axes[0].plot(t, targets[:n, 0], label="Таргет",             alpha=0.7, linestyle=':',  color='tab:red')
-    axes[0].set_ylabel("Амплитуда")
-    axes[0].set_title("I-канал")
+    axes[0].plot(t, raw_i, label = "Before the model (input)", alpha=0.7, linestyle='--', color='tab:blue')
+    axes[0].plot(t, preds[:n, 0], label="After the model (KAN)", alpha=0.9, color='tab:green')
+    axes[0].plot(t, targets[:n, 0], label="Target", alpha=0.7, linestyle=':', color='tab:red')
+    axes[0].set_ylabel("Amplitude")
+    axes[0].set_title("I-channel")
     axes[0].legend(loc='upper right')
     axes[0].grid(True)
 
-    # Q-канал
-    axes[1].plot(t, raw_q,          label="До модели (вход)",  alpha=0.7, linestyle='--', color='tab:blue')
-    axes[1].plot(t, preds[:n, 1],   label="После модели (KAN)", alpha=0.9, color='tab:green')
-    axes[1].plot(t, targets[:n, 1], label="Таргет",             alpha=0.7, linestyle=':',  color='tab:red')
-    axes[1].set_ylabel("Амплитуда")
-    axes[1].set_xlabel("Отсчёт")
-    axes[1].set_title("Q-канал")
+    axes[1].plot(t, raw_q, label = "Before the model (input)", alpha=0.7, linestyle='--', color='tab:blue')
+    axes[1].plot(t, preds[:n, 1], label = "After the model (KAN)", alpha=0.9, color='tab:green')
+    axes[1].plot(t, targets[:n, 1], label = "Target", alpha=0.7, linestyle=':',  color='tab:red')
+    axes[1].set_ylabel("Amplitude")
+    axes[1].set_xlabel("Sample")
+    axes[1].set_title("Q-channel")
     axes[1].legend(loc='upper right')
     axes[1].grid(True)
 
@@ -161,34 +144,32 @@ def plot_comparison(x_raw, preds, targets, max_val, n=300):
 
 
 def print_mae_comparison(x_raw, preds, targets, max_val):
-    """Выводит MAE до и после модели для I, Q и совместно."""
+
     raw_i = x_raw[:, 0] * max_val
     raw_q = x_raw[:, 1] * max_val if x_raw.shape[1] >= 2 else x_raw[:, 0] * max_val
 
     tgt_i = targets[:, 0]
     tgt_q = targets[:, 1]
 
-    # MAE до модели (вход vs таргет)
     mae_before_i = np.mean(np.abs(raw_i - tgt_i))
     mae_before_q = np.mean(np.abs(raw_q - tgt_q))
     mae_before   = np.mean(np.abs(
         np.column_stack((raw_i, raw_q)) - targets
     ))
 
-    # MAE после модели (предсказание vs таргет)
     mae_after_i = np.mean(np.abs(preds[:, 0] - tgt_i))
     mae_after_q = np.mean(np.abs(preds[:, 1] - tgt_q))
     mae_after   = np.mean(np.abs(preds - targets))
 
     print("=" * 45)
-    print(f"{'Метрика':<20} {'До модели':>10} {'После KAN':>12}")
+    print(f"{'Metric':<20} {'Before the model':>10} {'After KAN':>12}")
     print("=" * 45)
-    print(f"{'MAE I-канал':<20} {mae_before_i:>10.6f} {mae_after_i:>12.6f}")
-    print(f"{'MAE Q-канал':<20} {mae_before_q:>10.6f} {mae_after_q:>12.6f}")
-    print(f"{'MAE суммарный':<20} {mae_before:>10.6f} {mae_after:>12.6f}")
+    print(f"{'MAE I-channel':<20} {mae_before_i:>10.6f} {mae_after_i:>12.6f}")
+    print(f"{'MAE Q-channel':<20} {mae_before_q:>10.6f} {mae_after_q:>12.6f}")
+    print(f"{'MAE sum':<20} {mae_before:>10.6f} {mae_after:>12.6f}")
     print("=" * 45)
     improvement = (1 - mae_after / mae_before) * 100
-    print(f"Улучшение MAE: {improvement:.1f}%")
+    print(f"MAE improvement: {improvement:.1f}%")
     print("=" * 45)
 
 
@@ -198,8 +179,6 @@ def inference_kan(signal, batch_size, model, device, weights_file,
     model.load_state_dict(state_dict)
     model.eval()
 
-    # signal уже = shaped_signal / shaped_rms
-    # делим ещё на current_max чтобы попасть в [-1.19, 1.19] для сплайнов
     data_iq = np.column_stack((signal.real, signal.imag)) / max_val
     data_iq = np.clip(data_iq, -1.19, 1.19)
 
@@ -211,8 +190,6 @@ def inference_kan(signal, batch_size, model, device, weights_file,
             t = torch.from_numpy(win_iq[i:i + batch_size]).float().to(device)
             output_iq[i:i + batch_size] = model(t).cpu().numpy()
 
-    # Возвращаем в масштаб shaped_normalized (умножаем на max_val)
-    # main.py потом умножит на shaped_rms — вернёт в масштаб shaped_signal
     return output_iq * max_val
 
 
@@ -220,46 +197,44 @@ def main(train_en=0, lsb=2, mod_order=64):
     batch_size = 8192
 
     try:
-        trg_file_64_qam      = 'model_targets_64_qam.npy'
+        trg_file_64_qam = 'model_targets_64_qam.npy'
         obj_file_64_qam_2lsb = 'model_objects_64_qam_INL_2_LSB.npy'
         obj_file_64_qam_4lsb = 'model_objects_64_qam_INL_4_LSB.npy'
-        trg_file_32_qam      = 'model_targets_32_qam.npy'
+        trg_file_32_qam = 'model_targets_32_qam.npy'
         obj_file_32_qam_2lsb = 'model_objects_32_qam_INL_2_LSB.npy'
         obj_file_32_qam_4lsb = 'model_objects_32_qam_INL_4_LSB.npy'
 
         if mod_order == 64:
             if lsb == 2:
-                objects      = np.load(obj_file_64_qam_2lsb)[1000:1000 + 201000]
-                targets      = np.load(trg_file_64_qam)[1000:1000 + 201000]
+                objects = np.load(obj_file_64_qam_2lsb)[1000:1000 + 201000]
+                targets = np.load(trg_file_64_qam)[1000:1000 + 201000]
                 weights_file = "qam_64_kan_2_LSB_weights.pt"
             elif lsb == 4:
-                objects      = np.load(obj_file_64_qam_4lsb)[1000:1000 + 201000]
-                targets      = np.load(trg_file_64_qam)[1000:1000 + 201000]
+                objects = np.load(obj_file_64_qam_4lsb)[1000:1000 + 201000]
+                targets = np.load(trg_file_64_qam)[1000:1000 + 201000]
                 weights_file = "qam_64_kan_4_LSB_weights.pt"
         else:
             if lsb == 2:
-                objects      = np.load(obj_file_32_qam_2lsb)[1000:1000 + 201000]
-                targets      = np.load(trg_file_32_qam)[1000:1000 + 201000]
+                objects = np.load(obj_file_32_qam_2lsb)[1000:1000 + 201000]
+                targets = np.load(trg_file_32_qam)[1000:1000 + 201000]
                 weights_file = "qam_32_kan_2_LSB_weights.pt"
             elif lsb == 4:
-                objects      = np.load(obj_file_32_qam_4lsb)[1000:1000 + 201000]
-                targets      = np.load(trg_file_32_qam)[1000:1000 + 201000]
+                objects = np.load(obj_file_32_qam_4lsb)[1000:1000 + 201000]
+                targets = np.load(trg_file_32_qam)[1000:1000 + 201000]
                 weights_file = "qam_32_kan_4_LSB_weights.pt"
 
     except FileNotFoundError:
         print('Data files not found')
         return
 
-    # Совместный IQ-формат: shape (N, 2)
     objects = np.column_stack((objects.real, objects.imag))
     targets = np.column_stack((targets.real, targets.imag))
 
-    # Нормализация по максимуму среди обоих каналов
-    max_val         = np.max(np.abs(objects))
-    objects_norm    = objects / max_val
-    targets_norm    = targets / max_val
+    max_val = np.max(np.abs(objects))
+    print(f'Max_val for mod order = {mod_order}; inl val = {lsb} == {max_val}')
+    objects_norm = objects / max_val
+    targets_norm = targets / max_val
 
-    # Ограничиваем вход под диапазон сетки сплайнов ДО сплита
     objects_clipped = np.clip(objects_norm, -1.19, 1.19)
 
     print(f"Normalization max_val: {max_val:.4f}")
@@ -271,13 +246,13 @@ def main(train_en=0, lsb=2, mod_order=64):
 
     model = KAN_model.to(DEVICE)
     total_params = sum(p.numel() for p in model.parameters())
-    print(f"Number of parameters: {total_params}  (MLP paper reference ≈ 361)")
+    print(f"Number of parameters: {total_params}")
 
-    criterion  = nn.MSELoss()
-    lr         = 5e-3
+    criterion = nn.MSELoss()
+    lr = 5e-3
     num_epochs = 50
-    optimizer  = torch.optim.AdamW(model.parameters(), lr=lr, weight_decay=1e-5)
-    scheduler  = torch.optim.lr_scheduler.ReduceLROnPlateau(
+    optimizer = torch.optim.AdamW(model.parameters(), lr=lr, weight_decay=1e-5)
+    scheduler = torch.optim.lr_scheduler.ReduceLROnPlateau(
         optimizer, mode="min", factor=0.5, patience=7
     )
 
@@ -295,7 +270,7 @@ def main(train_en=0, lsb=2, mod_order=64):
         plt.grid()
         plt.legend()
         plt.title("KAN Train/Test Loss")
-        plt.show()
+        #plt.show()
 
     else:
         try:
@@ -307,10 +282,7 @@ def main(train_en=0, lsb=2, mod_order=64):
             preds       = preds_norm * max_val
             targets_out = targets_norm_out * max_val
 
-            # MAE до и после модели
             print_mae_comparison(x_test_raw, preds, targets_out, max_val)
-
-            # Сравнительный график
             plot_comparison(x_test_raw, preds, targets_out, max_val, n=300)
 
         except FileNotFoundError:
@@ -321,4 +293,10 @@ if __name__ == "__main__":
     TRAIN_EN = 1
     MOD_ORDER = 64
     LSB = 4
-    main(train_en=TRAIN_EN, lsb=LSB, mod_order=MOD_ORDER)
+    lsb_arr = [2, 4]
+    mod_order_arr = [32, 64]
+    test_cases = list(product(lsb_arr, mod_order_arr))
+    # 160 Parameters/ 240
+    for lsb, mod in test_cases:
+        main(train_en = TRAIN_EN, lsb = lsb, mod_order = mod)
+    #main(train_en=TRAIN_EN, lsb=LSB, mod_order=MOD_ORDER)

@@ -158,7 +158,7 @@ def generate_tx_base(bits_num, mod_order, sps, rolloff, filter_span, fs, ts, deb
         mean_val = np.mean(shaped_signal)
         #shaped_signal -= mean_val
         shaped_rms = rms_calc(shaped_signal)
-        shaped_normalized = shaped_signal / shaped_rms #global_rms
+        shaped_normalized = shaped_signal / shaped_rms
         if model_apply == 1:
             prediction = inference(shaped_normalized,
                 batch_size = len(shaped_normalized),
@@ -167,9 +167,14 @@ def generate_tx_base(bits_num, mod_order, sps, rolloff, filter_span, fs, ts, deb
                 weights_file = SIMULATION_WEIGHTS[mod_order]['MLP'][inl_val]) 
             print(SIMULATION_WEIGHTS[mod_order]['MLP'][inl_val])
         elif model_apply == 2:
-            current_max = max(np.max(np.abs(shaped_normalized.real)),
-                            np.max(np.abs(shaped_normalized.imag)))
-            print(f'With KAN current max is {current_max}')
+            current_max = max(np.max(np.abs(shaped_normalized.real)), np.max(np.abs(shaped_normalized.imag)))
+            print(f'With KAN; mod order = {mod_order}; inl val = {inl_val} current max is {current_max}')
+            if mod_order == 64:
+                current_max = 2.3325 if inl_val == 2 else 2.6355
+            else:
+                current_max = 2.373 if inl_val == 2 else 2.6844
+            print(f'With KAN; mod order = {mod_order}; inl val = {inl_val} current max is {current_max}')
+
             prediction = inference_kan(
                 shaped_normalized,
                 batch_size=8192,
@@ -203,7 +208,7 @@ def generate_tx_base(bits_num, mod_order, sps, rolloff, filter_span, fs, ts, deb
     if data_save:
         print(f'global_rms for targets is {global_rms}')
         centered_shaped = np.copy(shaped_signal)# - np.mean(shaped_signal)
-        centered_shaped /= global_rms #rms_calc(centered_shaped)
+        centered_shaped /= rms_calc(centered_shaped)
         np.save(f'model_targets_{mod_order}_qam.npy', centered_shaped)
     
     ### Shaped signal spectrum check
@@ -260,7 +265,7 @@ def simulate_channel_and_rx(bits, qam, shaped_signal_pure, up_signal, symbol_sig
         print(f'{np.max(np.abs(model_objects.real))}, {np.max(np.abs(model_objects.imag))}: After the de-embedding')
 
         #model_objects -= np.mean(model_objects)
-        model_objects /= rms_calc(model_objects) #global_rms 
+        model_objects /= rms_calc(model_objects) 
         print(f'global_rms for objects is {global_rms}')
         np.save(f'model_objects_{mod_order}_qam_INL_{inl_en}_LSB.npy', model_objects)
         return 1, 1, 1, 1, 1
@@ -349,7 +354,7 @@ def simulate_channel_and_rx(bits, qam, shaped_signal_pure, up_signal, symbol_sig
         ber = cf.ber_calc(bits[20000:-5000], demodulated_bits[20000:-5000])
         bers[i] = ber
         
-    return bers, nmse_final_arr, final_symbols, dac_gain, adc_gain
+    return bers, nmse_final_arr, final_symbols
 
 def ber_gain_plot(ber_array, nmse_array, gain_array, mod_order, title, title1):
     plt.figure(8)
@@ -401,7 +406,7 @@ def get_snr_from_ber(target_ber: float, snr_array: list, ber_array: list) -> flo
 
 def main():
     TEST_MOD_ORDERS = [64, 32]
-    TEST_INL_VALS = [2, 4]
+    TEST_INL_VALS = [4, 2]
     
     # 'MLP', 'KAN', 'CNN'
     MODELS_TO_TEST = ['CNN', 'MLP', 'KAN']         
@@ -444,7 +449,7 @@ def main():
                 filter_span=FILTER_SPAN, fs=FS, ts=TS, debug_check=DEBUG_CHECK, 
                 data_save=DATA_SAVE, model_apply=0, seed=SEED
             )
-            bers, nmses, symbols, _, _ = simulate_channel_and_rx(
+            bers, nmses, symbols = simulate_channel_and_rx(
                 bits, qam, shaped_signal, up_signal, symbol_signal, snr_arr,
                 inl_en=0, dac_gain=dac_gain, adc_gain=adc_gain, sps=SPS, sps_2=SPS_2, fs=FS,
                 rolloff=ROLLOFF, filter_span=FILTER_SPAN, ts=TS, mod_order=mod_order, 
@@ -460,7 +465,7 @@ def main():
                     filter_span=FILTER_SPAN, fs=FS, ts=TS, debug_check=DEBUG_CHECK, 
                     data_save=DATA_SAVE, model_apply=0, seed=SEED
                 )
-                bers, nmses, symbols, _, _ = simulate_channel_and_rx(
+                bers, nmses, symbols = simulate_channel_and_rx(
                     bits, qam, shaped_signal, up_signal, symbol_signal, snr_arr,
                     inl_en=inl_val, dac_gain=dac_gain, adc_gain=adc_gain, sps=SPS, sps_2=SPS_2, fs=FS,
                     rolloff=ROLLOFF, filter_span=FILTER_SPAN, ts=TS, mod_order=mod_order, 
@@ -478,7 +483,7 @@ def main():
                     inl_val=inl_val, seed=SEED
                 )
                 
-                bers, nmses, symbols, _, _ = simulate_channel_and_rx(
+                bers, nmses, symbols = simulate_channel_and_rx(
                     bits, qam, shaped_signal, up_signal, symbol_signal, snr_arr,
                     inl_en=inl_val, dac_gain=dac_gain, adc_gain=adc_gain, sps=SPS, sps_2=SPS_2, fs=FS,
                     rolloff=ROLLOFF, filter_span=FILTER_SPAN, ts=TS, mod_order=mod_order, 
@@ -492,11 +497,11 @@ def main():
         os.makedirs(folder_name, exist_ok=True)
 
     COLOR_MAP = {
-        'Ideal':  'red',
-        'No_DPD': 'blue',
-        'MLP':    'green',
-        'CNN':    'cyan',
-        'KAN':    'purple'
+        'Ideal':'red',
+        'No_DPD':'blue',
+        'MLP':'green',
+        'CNN':'goldenrod',
+        'KAN':'purple'
     }
 
     FEC_LIMIT = 3.84e-3
@@ -512,6 +517,7 @@ def main():
     print("=" * 70)
     print(f"{'Modulation':<12} {'INL':>5} {'Case':<10} {'SNR@FEC':>10} {'Penalty':>10}")
     print("-" * 70)
+
     for mod_order in TEST_MOD_ORDERS:
         ideal_snr = fec_snr.get((mod_order, 0, 'Ideal'), np.nan)
         for inl_val in TEST_INL_VALS:

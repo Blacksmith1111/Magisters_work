@@ -5,24 +5,21 @@ from torch.utils.data import TensorDataset, DataLoader
 from sklearn.model_selection import train_test_split
 from tqdm import tqdm
 import matplotlib.pyplot as plt
-from channel_funcs import normalize_to_ones
+from itertools import product
 
 
 DEVICE = "cuda:0" if torch.cuda.is_available() else "cpu"
 
 MLP_model = nn.Sequential(
     nn.Linear(2, 10),
-    #nn.LeakyReLU(),
-    nn.Tanh(), 
+    nn.LeakyReLU(),
+    #nn.Tanh(), 
     nn.Linear(10, 10),
-    #nn.LeakyReLU(),
-    nn.Tanh(),
-    nn.Linear(10, 10),
-    #nn.LeakyReLU(),
-    nn.Tanh(),
-    #nn.Linear(10, 10),
-    #nn.LeakyReLU(),
+    nn.LeakyReLU(),
     #nn.Tanh(),
+    nn.Linear(10, 10),
+    #nn.Tanh(),
+    nn.LeakyReLU(),
     #nn.Linear(10, 10),
     #nn.LeakyReLU(),
     #nn.Tanh(),
@@ -47,7 +44,7 @@ def data_prepare(objects, targets, batch_size=64):
     )
     plt.grid()
     plt.legend()
-    plt.show()
+    #plt.show()
     x_train, x_test, y_train, y_test = train_test_split(
         objects, targets, test_size=0.1, random_state=42
     )
@@ -219,7 +216,7 @@ def main(train_en = 0, lsb = 2, mod_order = 64):
         plt.legend()
         plt.title("Train and test loss")
         #plt.savefig(f"train_and_test_loss_num_epoch_{num_epochs}.png")
-        plt.show()
+        #plt.show()
         
     else:
         weights = torch.load(weights_file, map_location = DEVICE, weights_only = True)
@@ -231,7 +228,12 @@ def main(train_en = 0, lsb = 2, mod_order = 64):
 
 
 if __name__ == "__main__":
-    MOD_ORDER = 64
+    MOD_ORDER = 32
     LSB = 4
     TRAIN_EN = 1
-    main(train_en = TRAIN_EN, lsb = LSB, mod_order = MOD_ORDER)
+    lsb_arr = [2, 4]
+    mod_order_arr = [32, 64]
+    test_cases = list(product(lsb_arr, mod_order_arr))
+    # 272 Parameters 
+    for lsb, mod in test_cases:
+        main(train_en = TRAIN_EN, lsb = lsb, mod_order = mod)
