@@ -7,15 +7,27 @@ import channel_funcs as cf
 from tqdm import tqdm
 from mlp_model import MLP_model, inference
 from efficient_kan_model import inference_kan, KAN_model
-from concurrent.futures import ProcessPoolExecutor, as_completed
 import os
-from cnn_duplicate import CNN_DPD_Micro, inference_cnn
+from cnn_model_improved import CNN_DPD_Micro, inference_cnn
+import matplotlib.ticker as ticker
 
 
 DEVICE = 'cuda:0'
 model_mlp = MLP_model.to(DEVICE)
+total_params_mlp = sum(p.numel() for p in model_mlp.parameters())
+print(f'Number of parameters in MLP: {total_params_mlp}')
 model_kan = KAN_model.to(DEVICE)
+total_params_kan = sum(p.numel() for p in model_kan.parameters())
+print(f'Number of parameters in KAN: {total_params_kan}')
 model_cnn = CNN_DPD_Micro().to(DEVICE)
+total_params_cnn = sum(p.numel() for p in model_cnn.parameters())
+print(f'Number of parameters in CNN: {total_params_cnn}')
+
+model_params_num = {
+    'MLP': total_params_mlp,
+    'KAN': total_params_kan,
+    'CNN': total_params_cnn
+}
 
 ### 64 QAM weights
 WEIGHTS_FILE_64_QAM_MLP_2_LSB = 'qam_64_mlp_2_LSB_weights.pt'
@@ -47,6 +59,72 @@ SIMULATION_WEIGHTS = {
     }
 }
 
+def complexity_vs_penalty_plot(results, fec_snr, model_params, snr_arr, folder_name,
+                                inl_vals, mod_orders, models_to_test, fec_limit):
+
+    COLOR_MAP  = {'MLP': 'green', 'CNN': 'goldenrod', 'KAN': 'purple'}
+    MARKER_MAP = {'MLP': 'o', 'CNN': 'o', 'KAN': 'o'}
+
+    for inl_val in inl_vals:
+        for mod_order in mod_orders:
+            fig, ax = plt.subplots(figsize=(7, 6))
+
+            ideal_snr = fec_snr.get((mod_order, 0, 'Ideal'), np.nan)
+            plotted = False
+
+            for model_name in models_to_test:
+                n_params = model_params.get(model_name)
+                if n_params is None:
+                    continue
+                snr_val = fec_snr.get((mod_order, inl_val, model_name), np.nan)
+                if np.isnan(snr_val) or np.isnan(ideal_snr):
+                    continue
+
+                penalty = snr_val - ideal_snr
+                color = COLOR_MAP.get(model_name, 'black')
+                marker = MARKER_MAP.get(model_name, 'o')
+
+                ax.scatter(n_params, penalty,
+                           color=color, marker=marker, s=150,
+                           zorder=5, edgecolors='black', linewidths=0.8,
+                           label=model_name)
+                ax.annotate(
+                    f'{model_name}\n({n_params:,} params)\n{penalty:+.2f} dB',
+                    xy=(n_params, penalty),
+                    xytext=(12, 10), textcoords='offset points',
+                    fontsize=9, color=color,
+                    bbox=dict(boxstyle='round,pad=0.3',
+                              fc='white', ec=color, alpha=0.88)
+                )
+                plotted = True
+
+            ax.axhline(0, color='red', linestyle='--', linewidth=1.4, alpha=0.7, label='Ideal (no penalty)')
+            ax.set_title(f'{mod_order}-QAM | INL {inl_val} LSB', fontsize=13, fontweight='bold')
+            ax.set_xlabel('Model Complexity (Number of parameters)', fontsize=11)
+            ax.set_ylabel('FEC Penalty (dB)', fontsize=11)
+            ax.xaxis.set_major_formatter(ticker.FuncFormatter(lambda x, _: f'{int(x):,}'))
+            
+            ax.legend(
+                loc='lower left',
+                fontsize=9,
+                labelspacing=1.2,
+                handleheight=1.8,
+                borderpad=1.0,
+                framealpha=0.9
+            )
+            ax.grid(True, linestyle='--', alpha=0.5)
+            if plotted:
+                ax.margins(x=0.35, y=0.35)
+
+            fig.tight_layout()
+            save_path = os.path.join(
+                folder_name,
+                f'Complexity_vs_FEC_Penalty_{mod_order}QAM_INL{inl_val}LSB.png'
+            )
+            fig.savefig(save_path, dpi=150, bbox_inches='tight')
+            plt.show()
+            plt.close(fig)
+
 
 def time_syncronization(base_signal, delayed_signal, time_delay = None):
     if time_delay is None:
@@ -75,7 +153,6 @@ def constellation_normalization(signal, mod_order):
     Normalizes the signal to rms = constellation rms
     '''
     constellation_rms = cf.qam_constellation_rms_calc(mod_order)
-    #print(constellation_rms / rms_calc(signal))
     signal = signal / rms_calc(signal) *  constellation_rms
     return signal
 
@@ -155,8 +232,6 @@ def generate_tx_base(bits_num, mod_order, sps, rolloff, filter_span, fs, ts, deb
     if model_apply:
         print('Using the model')
         ### Model applying
-        mean_val = np.mean(shaped_signal)
-        #shaped_signal -= mean_val
         shaped_rms = rms_calc(shaped_signal)
         shaped_normalized = shaped_signal / shaped_rms
         if model_apply == 1:
@@ -197,8 +272,8 @@ def generate_tx_base(bits_num, mod_order, sps, rolloff, filter_span, fs, ts, deb
             
             prediction = np.column_stack((pred_complex.real, pred_complex.imag))
 
-        prediction *= shaped_rms #global_rms#shaped_rms # Switched back to the initial rms
-        de_centered_signal = prediction #+ mean_val
+        prediction *= shaped_rms # Switched back to the initial rms
+        de_centered_signal = prediction
         
         shaped_signal = de_centered_signal[:, 0] + 1j * de_centered_signal[:, 1]
         
@@ -344,8 +419,6 @@ def simulate_channel_and_rx(bits, qam, shaped_signal_pure, up_signal, symbol_sig
         final_symbols = cf.dd_lms_equalizer(downsampled, qam, num_taps=31, mu=0.05)
         #final_symbols = cf.dd_lms_equalizer(downsampled, symbol_signal, qam, num_taps=21, mu=0.005, train_len = len(downsampled))
 
-
-
         final_nmse = nmse_calc(symbol_signal, final_symbols)
         nmse_final_arr[i] = final_nmse
 
@@ -411,7 +484,7 @@ def main():
     # 'MLP', 'KAN', 'CNN'
     MODELS_TO_TEST = ['CNN', 'MLP', 'KAN']         
     
-    RUN_NO_INL = 1  #True              
+    RUN_NO_INL = True              
     RUN_WITH_INL = True
     
     BITS_NUM = 1_200_000            
@@ -455,7 +528,7 @@ def main():
                 rolloff=ROLLOFF, filter_span=FILTER_SPAN, ts=TS, mod_order=mod_order, 
                 debug_check=DEBUG_CHECK, noise_en=1, data_save=DATA_SAVE
             )
-            results[(mod_order, 0, 'Ideal')] = {'ber': bers, 'nmse': nmses}
+            results[(mod_order, 0, 'Ideal')] = {'ber': bers, 'nmse': nmses, 'symbols': symbols}
 
         for inl_val in TEST_INL_VALS:
             if RUN_WITH_INL:
@@ -471,7 +544,7 @@ def main():
                     rolloff=ROLLOFF, filter_span=FILTER_SPAN, ts=TS, mod_order=mod_order, 
                     debug_check=DEBUG_CHECK, noise_en=1, data_save=DATA_SAVE
                 )
-                results[(mod_order, inl_val, 'No_DPD')] = {'ber': bers, 'nmse': nmses}
+                results[(mod_order, inl_val, 'No_DPD')] = {'ber': bers, 'nmse': nmses, 'symbols': symbols}
 
             for model_name in MODELS_TO_TEST:
                 print(f"\n>>> Running Model: {model_name} | INL {inl_val} LSB ({mod_order}-QAM) <<<")
@@ -489,7 +562,7 @@ def main():
                     rolloff=ROLLOFF, filter_span=FILTER_SPAN, ts=TS, mod_order=mod_order, 
                     debug_check=DEBUG_CHECK, noise_en=1, data_save=DATA_SAVE
                 )
-                results[(mod_order, inl_val, model_name)] = {'ber': bers, 'nmse': nmses}
+                results[(mod_order, inl_val, model_name)] = {'ber': bers, 'nmse': nmses, 'symbols': symbols}
 
 
     folder_name = 'Pictures'
@@ -525,14 +598,12 @@ def main():
                 snr_val = fec_snr.get((mod_order, inl_val, m_name), np.nan)
                 penalty = snr_val - ideal_snr if not np.isnan(snr_val) else np.nan
                 penalty_str = f"+{penalty:.2f} dB" if not np.isnan(penalty) else "N/A"
-                snr_str     = f"{snr_val:.2f} dB"  if not np.isnan(snr_val) else "N/A"
+                snr_str = f"{snr_val:.2f} dB"  if not np.isnan(snr_val) else "N/A"
                 print(f"{mod_order}-QAM      {inl_val:>5} {m_name:<10} {snr_str:>10} {penalty_str:>10}")
         print("-" * 70)
 
-    # ── Графики BER + NMSE + Penalty bar-chart ─────────────────────────────
     for inl_val in TEST_INL_VALS:
 
-        # --- BER plot с аннотациями penalty ----------------------------------
         fig, ax = plt.subplots(figsize=(13, 8))
 
         for (m_order, i_val, m_name), data in results.items():
@@ -540,12 +611,12 @@ def main():
                 continue
 
             marker = 's' if m_order == 32 else 'o'
-            ls     = '--' if m_order == 32 else '-'
-            color  = COLOR_MAP.get(m_name, 'black')
+            ls = '--' if m_order == 32 else '-'
+            color = COLOR_MAP.get(m_name, 'black')
 
             ideal_snr = fec_snr.get((m_order, 0, 'Ideal'), np.nan)
-            snr_val   = fec_snr.get((m_order, i_val, m_name), np.nan)
-            penalty   = snr_val - ideal_snr
+            snr_val = fec_snr.get((m_order, i_val, m_name), np.nan)
+            penalty = snr_val - ideal_snr
 
             if m_name == 'Ideal':
                 label = f'{m_order}-QAM  Ideal (No INL) | SNR@FEC={snr_val:.1f} dB'
@@ -556,28 +627,24 @@ def main():
                 label = (f'{m_order}-QAM  INL {inl_val} LSB + {m_name} | '
                          f'SNR@FEC={snr_val:.1f} dB  Penalty=+{penalty:.1f} dB')
 
-            ax.plot(snr_arr, data['ber'],
-                    marker=marker, linestyle=ls, color=color, label=label)
+            ax.plot(snr_arr, data['ber'], marker=marker, linestyle=ls, color=color, label=label)
 
             if not np.isnan(snr_val):
-                ax.axvline(x=snr_val, color=color,
-                           linestyle=':', linewidth=1.2, alpha=0.55)
+                ax.axvline(x=snr_val, color=color, linestyle=':', linewidth=1.2, alpha=0.55)
 
-        ax.axhline(y=FEC_LIMIT, color='black', linestyle=':', linewidth=2,
-                   label=f'FEC Limit ({FEC_LIMIT:.2e})')
-
+        ax.axhline(y = FEC_LIMIT, color = 'black', linestyle = ':', linewidth = 2, label = f'FEC Limit ({FEC_LIMIT:.2e})')
         ax.set_yscale('log')
-        ax.set_ylim(bottom=1e-5, top=1e-2)
-        ax.set_xlabel('SNR (dB)', fontsize=12)
-        ax.set_ylabel('BER', fontsize=12)
-        ax.set_title(f'BER vs SNR | 32-QAM & 64-QAM | INL {inl_val} LSB', fontsize=13)
-        ax.legend(loc='upper right', fontsize=9)
-        ax.grid(True, which='both', ls='--', alpha=0.6)
+        ax.set_ylim(bottom = 1e-5, top = 1e-2)
+        ax.set_xlabel('SNR (dB)', fontsize = 12)
+        ax.set_ylabel('BER', fontsize = 12)
+        ax.set_title(f'BER vs SNR | 32-QAM & 64-QAM | INL {inl_val} LSB', fontsize = 13)
+        ax.legend(loc = 'lower left', fontsize = 9)
+        ax.grid(True, which = 'both', ls = '--', alpha = 0.6)
         fig.tight_layout()
-        fig.savefig(os.path.join(folder_name, f'BER_Both_QAM_INL_{inl_val}LSB.png'), dpi=150)
+        fig.savefig(os.path.join(folder_name, f'BER_Both_QAM_INL_{inl_val}LSB.png'), dpi = 150)
         plt.show()
 
-        fig2, ax2 = plt.subplots(figsize=(13, 7))
+        fig2, ax2 = plt.subplots(figsize = (13, 7))
 
         for (m_order, i_val, m_name), data in results.items():
             if not (i_val == inl_val or m_name == 'Ideal'):
@@ -593,22 +660,23 @@ def main():
                 label = f'{m_order}-QAM  INL {inl_val} LSB'
             else:
                 label = f'{m_order}-QAM  INL {inl_val} LSB + {m_name}'
+            
+            ### Save the final constellation
+            cf.constellation_plot(data['symbols'], m_order, title = label, 
+                save_file = os.path.join(folder_name, f'Constellation_{label}.png'))
 
-            ax2.plot(snr_arr, data['nmse'],
-                     marker=marker, linestyle=ls, color=color, label=label)
+            ax2.plot(snr_arr, data['nmse'], marker = marker, linestyle = ls, color = color, label = label)
 
-        ax2.set_xlabel('SNR (dB)', fontsize=12)
-        ax2.set_ylabel('NMSE (dB)', fontsize=12)
-        ax2.set_title(f'NMSE vs SNR | 32-QAM & 64-QAM | INL {inl_val} LSB', fontsize=13)
-        ax2.legend(loc='upper right', fontsize=9)
-        ax2.grid(True, ls='--', alpha=0.6)
+        ax2.set_xlabel('SNR (dB)', fontsize = 12)
+        ax2.set_ylabel('NMSE (dB)', fontsize = 12)
+        ax2.set_title(f'NMSE vs SNR | 32-QAM & 64-QAM | INL {inl_val} LSB', fontsize = 13)
+        ax2.legend(loc = 'lower left', fontsize = 9)
+        ax2.grid(True, ls = '--', alpha = 0.6)
         fig2.tight_layout()
-        fig2.savefig(os.path.join(folder_name, f'NMSE_Both_QAM_INL_{inl_val}LSB.png'), dpi=150)
+        fig2.savefig(os.path.join(folder_name, f'NMSE_Both_QAM_INL_{inl_val}LSB.png'), dpi = 150)
         plt.show()
 
-        # --- Penalty bar-chart -----------------------------------------------
-        fig3, axes = plt.subplots(1, len(TEST_MOD_ORDERS),
-                                  figsize=(6 * len(TEST_MOD_ORDERS), 6), sharey=False)
+        fig3, axes = plt.subplots(1, len(TEST_MOD_ORDERS), figsize = (6 * len(TEST_MOD_ORDERS), 6), sharey = False)
         if len(TEST_MOD_ORDERS) == 1:
             axes = [axes]
 
@@ -624,10 +692,8 @@ def main():
                 penalties.append(pen)
                 bar_colors.append(COLOR_MAP.get(case, 'grey'))
 
-            bars = ax3.bar(labels, penalties, color=bar_colors, edgecolor='black',
-                           linewidth=0.8, width=0.5)
+            bars = ax3.bar(labels, penalties, color=bar_colors, edgecolor='black', linewidth=0.8, width=0.5)
 
-            # Подписи значений над/под барами
             for bar, pen in zip(bars, penalties):
                 ypos = bar.get_height() + 0.03 if pen >= 0 else bar.get_height() - 0.15
                 ax3.text(bar.get_x() + bar.get_width() / 2, ypos,
@@ -640,6 +706,9 @@ def main():
             ax3.set_xlabel('Predistorter', fontsize=11)
             ax3.grid(axis='y', ls='--', alpha=0.5)
 
+            y_min, y_max = ax3.get_ylim()
+            ax3.set_ylim(y_min, y_max * 1.25 if y_max > 0 else y_max)
+
         fig3.suptitle(
             f'FEC Penalty vs Predistorter | INL {inl_val} LSB\n'
             f'(SNR relative to ideal, BER = {FEC_LIMIT:.2e})',
@@ -648,6 +717,18 @@ def main():
         fig3.tight_layout()
         fig3.savefig(os.path.join(folder_name, f'FEC_Penalty_INL_{inl_val}LSB.png'), dpi=150)
         plt.show()
+
+    complexity_vs_penalty_plot(
+        results = results,
+        fec_snr = fec_snr,
+        model_params = model_params_num,
+        snr_arr = snr_arr,
+        folder_name = folder_name,
+        inl_vals = TEST_INL_VALS,
+        mod_orders = TEST_MOD_ORDERS,
+        models_to_test= MODELS_TO_TEST,
+        fec_limit = FEC_LIMIT
+    )
 
 
 if __name__ == "__main__":

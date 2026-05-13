@@ -6,13 +6,12 @@ from scipy.signal import fftconvolve
 from numba import njit
 
 
-def apply_fixed_lpf(signal, cutoff_hz, fs, N=401, plt_en = 0):
+def apply_fixed_lpf(signal, cutoff_hz, fs, N = 401, plt_en = 0, sps_2 = 20):
     taps = sig.firwin(N, cutoff_hz, window=('kaiser', 14), fs=fs)
-    #taps = taps / np.sqrt(np.sum(np.abs(taps)**2))
-    taps *= 20
+    taps *= sps_2
     if plt_en:
         spectrum_plot(taps, fs, title = 'LPF frequency characteristics', plt_en = plt_en)
-    return fftconvolve(signal, taps, mode="full") #np.convolve(signal, taps, mode="full")
+    return fftconvolve(signal, taps, mode="full")
 
 def spectrum_plot(signal: np.ndarray, Fs: float, title: str, plt_en: bool = 0) -> None:
     spectrum = np.fft.fftshift(np.fft.fft(signal))
@@ -52,7 +51,7 @@ def constellation_plot(modulated_signal: np.ndarray, mod_order: int, title: str,
     reference_points = get_ideal_constellation(mod_order)
     if reference_points is not None:
         plt.scatter(reference_points.real, reference_points.imag, 
-                    s=80, color='red', marker='X', edgecolors='black', label=f'Ideal {mod_order}-QAM')
+        s=30, color='red', marker='o', edgecolors='black', label=f'Ideal {mod_order}-QAM')
         
     if show_decision_boundaries:
         if mod_order == 64:
@@ -78,9 +77,10 @@ def constellation_plot(modulated_signal: np.ndarray, mod_order: int, title: str,
     axis_limit = 9 if mod_order == 64 else 7
     plt.xlim(-axis_limit, axis_limit)
     plt.ylim(-axis_limit, axis_limit)
-    if not save_file == 'None': 
+    if save_file is not 'None': 
         plt.savefig(save_file)
-    plt.show()
+    plt.close('all')
+    #plt.show()
 
 
 def upsample(signal: np.ndarray, sps: int) -> np.ndarray:
@@ -88,10 +88,8 @@ def upsample(signal: np.ndarray, sps: int) -> np.ndarray:
     signal_upsampled[::sps] = signal
     return signal_upsampled
 
-
 def downsample(signal: np.ndarray, sps: int) -> np.ndarray:
     return signal[::sps]
-
 
 def pulse_shaping(
     upsampled_signal: np.ndarray,
@@ -108,7 +106,6 @@ def pulse_shaping(
 
 
     if normaliztion == "L2":
-        #h = h / np.sqrt(np.sum(h**2))
         h = h / np.sqrt(np.sum(np.abs(h)**2))
     else:
         h = h / np.sum(h)
@@ -144,8 +141,7 @@ def ber_calc(initial_bits: np.ndarray, final_bits: np.ndarray) -> float:
 
 
 def INL(full_scale: np.ndarray, lsb_amplitude: float, plt_en: bool = 0) -> np.ndarray:
-    # 1.42
-    #inl_vals = lsb_amplitude * np.sin(2 * np.pi * (full_scale - full_scale[0]) / len(full_scale))
+    
     inl_vals = lsb_amplitude * np.sin(2 * np.pi * (full_scale - full_scale[0]) / (len(full_scale) - 1))
 
     if plt_en:
@@ -263,7 +259,7 @@ class Modulator32QAM:
         return demodulated_bits
 
 
-@njit(cache=True)
+@njit(cache = True)
 def _nlms_core_fast(rx_symbols, constellation, initial_gain, num_taps, mu):
     N = len(rx_symbols)
     w = np.zeros(num_taps, dtype=np.complex128)
@@ -320,3 +316,5 @@ def dd_lms_equalizer(rx_symbols, qam_obj, num_taps=21, mu=0.05):
     out_aligned = np.roll(out_symbols, -delay)
     
     return out_aligned
+
+
