@@ -2,6 +2,7 @@ import numpy as np
 import matplotlib.pyplot as plt
 import commpy.modulation as mod
 from scipy import signal as sig
+from scipy.ndimage import uniform_filter1d
 from commpy.channels import awgn
 import channel_funcs as cf
 from tqdm import tqdm
@@ -10,6 +11,7 @@ from efficient_kan_model import inference_kan, KAN_model
 import os
 from cnn_model_improved import CNN_DPD_Micro, inference_cnn
 import matplotlib.ticker as ticker
+from numba import njit, prange
 
 
 DEVICE = 'cuda:0'
@@ -267,7 +269,7 @@ def generate_tx_base(bits_num, mod_order, sps, rolloff, filter_span, fs, ts, deb
                 model=model_cnn,
                 device=DEVICE,
                 weights_file=SIMULATION_WEIGHTS[mod_order]['CNN'][inl_val],
-                seq_len=128 
+                seq_len=32 #128 
             )
             
             prediction = np.column_stack((pred_complex.real, pred_complex.imag))
@@ -295,10 +297,10 @@ def generate_tx_base(bits_num, mod_order, sps, rolloff, filter_span, fs, ts, deb
         ###
     return bits, qam, symbol_signal, up_signal, shaped_signal
 
-
 def simulate_channel_and_rx(bits, qam, shaped_signal_pure, up_signal, symbol_signal, 
                             snr_arr, inl_en, dac_gain, adc_gain, sps, sps_2, fs, rolloff,
-                            filter_span, ts, mod_order, noise_en = 1, debug_check = 1, data_save = 0):
+                            filter_span, ts, mod_order, noise_en = 1, debug_check = 1, data_save = 0,
+                            phase_noise_en = 0, delta_nu = 200e3):
     
     bers = np.zeros_like(snr_arr, dtype = np.float64)
     nmse_final_arr = np.zeros_like(bers)
@@ -372,6 +374,7 @@ def simulate_channel_and_rx(bits, qam, shaped_signal_pure, up_signal, symbol_sig
         ######## Downconversion
         baseband_signal = cf.downconversion(passband_signal, Fc = fs * sps_2, Fs = fs * sps_2 * sps, plt_en = debug_check)
 
+
         ######### ADC with distortions
         baseband_after_lpf = time_syncronization(shaped_upsampled, baseband_signal, time_delay = 200)
         downsampled = cf.downsample(baseband_after_lpf, sps_2)
@@ -414,10 +417,46 @@ def simulate_channel_and_rx(bits, qam, shaped_signal_pure, up_signal, symbol_sig
             title = f'Initial upsampled on {sps} SPS signal; Recovered signal after the matched filtering on {sps} SPS with time syncronization'
             compare_2_signals(up_signal, recovered, title)
 
+        ######## Добавление фазового шума на символьной скорости (SPS=1)
+        # Физически: суммарный эффект TX+RX гетеродинов (Wiener process)
+        if phase_noise_en:
+            _sigma_dphi = np.sqrt(2 * np.pi * delta_nu / fs)  # fs = baud_rate
+            _pn = np.cumsum(np.random.normal(0, _sigma_dphi, len(downsampled)))
+            # Частотный сдвиг
+            _n   = np.arange(len(downsampled))
+            _cfo = 300e6   # Гц — задаётся как параметр
+            downsampled = downsampled * np.exp(1j * (2 * np.pi * _cfo * _n / fs + _pn))
+            #downsampled = downsampled * np.exp(1j * _pn)
+
         ######## Getting symbols back on SPS = 1
-        #final_symbols = constellation_normalization(downsampled, mod_order)
-        final_symbols = cf.dd_lms_equalizer(downsampled, qam, num_taps=31, mu=0.05)
-        #final_symbols = cf.dd_lms_equalizer(downsampled, symbol_signal, qam, num_taps=21, mu=0.005, train_len = len(downsampled))
+        if phase_noise_en:
+            # 1. CFO компенсация (300 МГц сдвиг)
+            if mod_order == 32 and inl_en == 4:
+                downsampled = downsampled * np.exp(-1j * 2 * np.pi * _cfo * np.arange(len(downsampled)) / fs)
+            else:
+                downsampled, estimated_cfo = cfo_estimate_and_correct(downsampled, fs)
+            
+            # Нормировка
+            rms_in   = np.sqrt(np.mean(np.abs(downsampled)**2))
+            sym_norm = downsampled / rms_in
+
+            # Нормированное созвездие
+            if mod_order == 64:
+                _m = int(np.sqrt(mod_order))
+                _lv = np.arange(-(_m-1), _m, 2)
+                _re, _im = np.meshgrid(_lv, _lv)
+                const_bps = (_re + 1j * _im).flatten().astype(complex)
+            else:
+                const_bps = np.array(qam.constellation, dtype=complex)
+            const_bps /= np.sqrt(np.mean(np.abs(const_bps)**2))
+
+            # BPS компенсация (векторизованная, блочная)
+            compensated  = bps_phase_compensation(sym_norm, const_bps, B=128, Nw=64, block=5000)
+            final_symbols = compensated * cf.qam_constellation_rms_calc(mod_order)
+        else:
+            #final_symbols = constellation_normalization(downsampled, mod_order)
+            final_symbols = cf.dd_lms_equalizer(downsampled, qam, num_taps=31, mu=0.05)
+            #final_symbols = cf.dd_lms_equalizer(downsampled, symbol_signal, qam, num_taps=21, mu=0.005, train_len = len(downsampled))
 
         final_nmse = nmse_calc(symbol_signal, final_symbols)
         nmse_final_arr[i] = final_nmse
@@ -477,8 +516,93 @@ def get_snr_from_ber(target_ber: float, snr_array: list, ber_array: list) -> flo
     
     return float(estimated_snr)
 
+
+@njit(parallel=True, cache=True)
+def _bps_cost_numba(symbols_re, symbols_im, const_re, const_im, tp, cost):
+    """
+    Заполняет cost[n, b] = min_c |symbols[n]*exp(j*tp[b]) - const[c]|^2
+    Параллельно по символам (prange).
+    """
+    N = symbols_re.shape[0]
+    B = tp.shape[0]
+    C = const_re.shape[0]
+    for n in prange(N):
+        sr = symbols_re[n]
+        si = symbols_im[n]
+        for b in range(B):
+            # exp(j*tp[b]) = cos(tp[b]) + j*sin(tp[b])
+            cos_b = np.cos(tp[b])
+            sin_b = np.sin(tp[b])
+            rot_re = sr * cos_b - si * sin_b
+            rot_im = sr * sin_b + si * cos_b
+            min_d = 1e18
+            for c in range(C):
+                dr = rot_re - const_re[c]
+                di = rot_im - const_im[c]
+                d  = dr*dr + di*di
+                if d < min_d:
+                    min_d = d
+            cost[n, b] = min_d
+
+
+def bps_phase_compensation(symbols, const, B=128, Nw=64, block=5000):
+    N  = len(symbols)
+    tp = np.linspace(-np.pi/4, np.pi/4, B, endpoint=False).astype(np.float64)
+
+    cost = np.empty((N, B), dtype=np.float32)
+    _bps_cost_numba(
+        symbols.real.astype(np.float64),
+        symbols.imag.astype(np.float64),
+        const.real.astype(np.float64),
+        const.imag.astype(np.float64),
+        tp, cost
+    )
+
+    smoothed = uniform_filter1d(cost, size=Nw, axis=0)
+    phi_raw  = tp[np.argmin(smoothed, axis=1)]
+
+    phi_full   = np.empty(N)
+    phi_offset = 0.0
+    for blk in range(int(np.ceil(N / block))):
+        s = blk * block
+        e = min(s + block, N)
+        phi_uw = np.unwrap(phi_raw[s:e] * 4) / 4
+        if blk > 0:
+            raw_jump = phi_uw[0] - phi_offset
+            phi_uw   = phi_uw - np.round(raw_jump / (np.pi/2)) * (np.pi/2)
+        phi_full[s:e] = phi_uw
+        phi_offset    = phi_full[e - 1]
+
+    return symbols * np.exp(1j * phi_full)
+
+def cfo_estimate_and_correct(symbols, fs, M=4):
+    """
+    Оценка и компенсация CFO методом M-й степени.
+    fs     — символьная частота (baud_rate), Гц
+    M      — порядок (4 для QAM с 4-кратной симметрией)
+    """
+    N = len(symbols)
+
+    # Убираем модуляцию возведением в M-ю степень
+    powered = symbols ** M                          # спектральная линия на M*f_cfo
+
+    # FFT и поиск пика
+    spectrum  = np.fft.fft(powered, n=N)
+    freqs     = np.fft.fftfreq(N, d=1.0/fs)        # Гц
+    peak_idx  = np.argmax(np.abs(spectrum))
+    f_cfo_M   = freqs[peak_idx]                     # частота пика = M * f_cfo
+    f_cfo     = f_cfo_M / M                         # истинный CFO
+
+    print(f"Оценка CFO: {f_cfo/1e6:.3f} МГц")
+
+    # Компенсация: умножаем на exp(-j*2pi*f_cfo*n/fs)
+    n = np.arange(N)
+    corrected = symbols * np.exp(-1j * 2 * np.pi * f_cfo * n / fs)
+
+    return corrected, f_cfo
+
 def main():
-    TEST_MOD_ORDERS = [64, 32]
+    TEST_MOD_ORDERS = [32, 64]
     TEST_INL_VALS = [4, 2]
     
     # 'MLP', 'KAN', 'CNN'
@@ -488,8 +612,8 @@ def main():
     RUN_WITH_INL = True
     
     BITS_NUM = 1_200_000            
-    F_SYM = 10e3 # (FS / SPS)
-    FS = 10e3  # SPS = 1
+    F_SYM = 32e9 # (FS / SPS)
+    FS = 32e9  # SPS = 1
     SPS = 2
     SPS_2 = 10 * 2
     TS = 1 / F_SYM
@@ -498,6 +622,8 @@ def main():
     DATA_SAVE = 0
     DEBUG_CHECK = 0
     SEED = 100
+    PHASE_NOISE_EN = 1   # 1 = включить фазовый шум, 0 = выключить
+    DELTA_NU = 200e3     # суммарная ширина линии Tx+Rx, Гц
     snr_arr = np.arange(14, 30, 1)
 
     GAINS = {
@@ -526,7 +652,8 @@ def main():
                 bits, qam, shaped_signal, up_signal, symbol_signal, snr_arr,
                 inl_en=0, dac_gain=dac_gain, adc_gain=adc_gain, sps=SPS, sps_2=SPS_2, fs=FS,
                 rolloff=ROLLOFF, filter_span=FILTER_SPAN, ts=TS, mod_order=mod_order, 
-                debug_check=DEBUG_CHECK, noise_en=1, data_save=DATA_SAVE
+                debug_check=DEBUG_CHECK, noise_en=1, data_save=DATA_SAVE,
+                phase_noise_en=PHASE_NOISE_EN, delta_nu=DELTA_NU
             )
             results[(mod_order, 0, 'Ideal')] = {'ber': bers, 'nmse': nmses, 'symbols': symbols}
 
@@ -542,7 +669,8 @@ def main():
                     bits, qam, shaped_signal, up_signal, symbol_signal, snr_arr,
                     inl_en=inl_val, dac_gain=dac_gain, adc_gain=adc_gain, sps=SPS, sps_2=SPS_2, fs=FS,
                     rolloff=ROLLOFF, filter_span=FILTER_SPAN, ts=TS, mod_order=mod_order, 
-                    debug_check=DEBUG_CHECK, noise_en=1, data_save=DATA_SAVE
+                    debug_check=DEBUG_CHECK, noise_en=1, data_save=DATA_SAVE,
+                    phase_noise_en=PHASE_NOISE_EN, delta_nu=DELTA_NU
                 )
                 results[(mod_order, inl_val, 'No_DPD')] = {'ber': bers, 'nmse': nmses, 'symbols': symbols}
 
@@ -560,7 +688,8 @@ def main():
                     bits, qam, shaped_signal, up_signal, symbol_signal, snr_arr,
                     inl_en=inl_val, dac_gain=dac_gain, adc_gain=adc_gain, sps=SPS, sps_2=SPS_2, fs=FS,
                     rolloff=ROLLOFF, filter_span=FILTER_SPAN, ts=TS, mod_order=mod_order, 
-                    debug_check=DEBUG_CHECK, noise_en=1, data_save=DATA_SAVE
+                    debug_check=DEBUG_CHECK, noise_en=1, data_save=DATA_SAVE,
+                    phase_noise_en=PHASE_NOISE_EN, delta_nu=DELTA_NU
                 )
                 results[(mod_order, inl_val, model_name)] = {'ber': bers, 'nmse': nmses, 'symbols': symbols}
 
