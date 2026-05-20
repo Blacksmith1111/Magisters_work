@@ -34,18 +34,18 @@ model_params_num = {
 ### 64 QAM weights
 WEIGHTS_FILE_64_QAM_MLP_2_LSB = 'qam_64_mlp_2_LSB_weights.pt'
 WEIGHTS_FILE_64_QAM_KAN_2_LSB = 'qam_64_kan_2_LSB_weights.pt'
-WEIGHTS_FILE_64_QAM_CNN_2_LSB = 'qam_64_cnn_2_LSB_weights.pt'
+WEIGHTS_FILE_64_QAM_CNN_2_LSB = 'qam_64_cnn_2_LSB_weights_1.pt'
 WEIGHTS_FILE_64_QAM_MLP_4_LSB = 'qam_64_mlp_4_LSB_weights.pt'
 WEIGHTS_FILE_64_QAM_KAN_4_LSB = 'qam_64_kan_4_lsb_weights.pt'
-WEIGHTS_FILE_64_QAM_CNN_4_LSB = 'qam_64_cnn_4_LSB_weights.pt'
+WEIGHTS_FILE_64_QAM_CNN_4_LSB = 'qam_64_cnn_4_LSB_weights_1.pt'
 
 ### 32 QAM weights
 WEIGHTS_FILE_32_QAM_MLP_2_LSB = 'qam_32_mlp_2_LSB_weights.pt'
 WEIGHTS_FILE_32_QAM_MLP_4_LSB = 'qam_32_mlp_4_LSB_weights.pt'
 WEIGHTS_FILE_32_QAM_KAN_2_LSB = 'qam_32_kan_2_LSB_weights.pt'
 WEIGHTS_FILE_32_QAM_KAN_4_LSB = 'qam_32_kan_4_LSB_weights.pt'
-WEIGHTS_FILE_32_QAM_CNN_2_LSB = 'qam_32_cnn_2_LSB_weights.pt'
-WEIGHTS_FILE_32_QAM_CNN_4_LSB = 'qam_32_cnn_4_LSB_weights.pt'
+WEIGHTS_FILE_32_QAM_CNN_2_LSB = 'qam_32_cnn_2_LSB_weights_1.pt'
+WEIGHTS_FILE_32_QAM_CNN_4_LSB = 'qam_32_cnn_4_LSB_weights_1.pt'
 
 
 SIMULATION_WEIGHTS = {
@@ -269,7 +269,7 @@ def generate_tx_base(bits_num, mod_order, sps, rolloff, filter_span, fs, ts, deb
                 model=model_cnn,
                 device=DEVICE,
                 weights_file=SIMULATION_WEIGHTS[mod_order]['CNN'][inl_val],
-                seq_len=32 #128 
+                seq_len=128 
             )
             
             prediction = np.column_stack((pred_complex.real, pred_complex.imag))
@@ -310,25 +310,14 @@ def simulate_channel_and_rx(bits, qam, shaped_signal_pure, up_signal, symbol_sig
     if dac_gain != 0:
             factor = 0
             if inl_en == 0:
-                #clip_ratio = 2.6 # ideal
-                clip_ratio = 1.8 if mod_order == 64 else 1.6
-                #dac_gain = 2.928 if mod_order == 64 else 4.179
-                #dac_gain = 2 if mod_order == 64 else 2.5
                 pass
-            
-            elif inl_en == 2:
-                clip_ratio = 1.17 if mod_order == 64 else 1.4
-                #dac_gain = 2 if mod_order == 64 else 2.5
-                #factor = 4/8 if mod_order == 32 else 5/8 
+            elif inl_en == 2: 
                 factor = 5/8
             else:
-                clip_ratio = 3.51 if mod_order == 64 else 3.58
-                #dac_gain = 1.41 if mod_order == 64 else 1.7
-                factor = 4/8#4/8 #3.8 / 8
-            #dac_gain = 15.0 / (rms_amp * clip_ratio)
-            print(f'Max values of the real and imag components before the DAC: {np.max(np.abs(shaped_signal_pure.real))}; {np.max(np.abs(shaped_signal_pure.imag))}') 
+                factor = 4/8
+            #print(f'Max values of the real and imag components before the DAC: {np.max(np.abs(shaped_signal_pure.real))}; {np.max(np.abs(shaped_signal_pure.imag))}') 
             current_shaped = cf.quantizer(shaped_signal_pure, resolution = 5, gain = dac_gain, inl_en = inl_en * factor) 
-            print(f'Max values of the real and imag components after the DAC: {np.max(np.abs(current_shaped.real))}; {np.max(np.abs(current_shaped.imag))}')
+            #print(f'Max values of the real and imag components after the DAC: {np.max(np.abs(current_shaped.real))}; {np.max(np.abs(current_shaped.imag))}')
     else:
             current_shaped = shaped_signal_pure
 
@@ -385,10 +374,10 @@ def simulate_channel_and_rx(bits, qam, shaped_signal_pure, up_signal, symbol_sig
         if debug_check:
             ### Shaped upsampled to 40 SPS signal and signal on 40 SPS after the LPF nmse check 
             print('Shaped upsampled to 40 SPS signal and  40 SPS signal after the LPF nmse calculation')
-            shaped_up_energy, recovered_energy = np.sum(np.abs(shaped_upsampled)** 2), np.sum(np.abs(recovered) ** 2)
+            shaped_up_energy, recovered_energy = energy_calc(shaped_upsampled), energy_calc(recovered)
             print(f'Signals energies: {shaped_up_energy}; {recovered_energy}')
             shaped_upsampled, recovered = normalize_energy(shaped_upsampled), normalize_energy(recovered)
-            shaped_up_energy, recovered_energy = np.sum(np.abs(shaped_upsampled)** 2), np.sum(np.abs(recovered) ** 2)
+            shaped_up_energy, recovered_energy = energy_calc(shaped_upsampled), energy_calc(recovered)
             print(f'Signals energies: {shaped_up_energy}; {recovered_energy}')
 
             title = f'Shaped, upsampled to {sps * sps_2} SPS, before LPF signal; Recovered signal on {sps * sps_2} SPS after LPF with time syncronization'
@@ -396,9 +385,9 @@ def simulate_channel_and_rx(bits, qam, shaped_signal_pure, up_signal, symbol_sig
 
         ### ADC quantizer
         if adc_gain != 0:
-            print(f'Max values of the real and imag components before the ADC: {np.max(np.abs(downsampled.real))}; {np.max(np.abs(downsampled.imag))}')
+            #print(f'Max values of the real and imag components before the ADC: {np.max(np.abs(downsampled.real))}; {np.max(np.abs(downsampled.imag))}')
             downsampled = cf.quantizer(downsampled, resolution = 8, gain = adc_gain)
-            print(f'Max values of the real and imag components after the ADC: {np.max(np.abs(downsampled.real))}; {np.max(np.abs(downsampled.imag))}')
+            #print(f'Max values of the real and imag components after the ADC: {np.max(np.abs(downsampled.real))}; {np.max(np.abs(downsampled.imag))}')
 
         ######## Matched filter
         downsampled_shaped = cf.pulse_shaping(downsampled, rolloff, filter_span, sps, ts, fs * sps, plt_en=0)
@@ -409,38 +398,33 @@ def simulate_channel_and_rx(bits, qam, shaped_signal_pure, up_signal, symbol_sig
         if debug_check:
             recovered = cf.upsample(downsampled, sps)
             print(f'Initial upsampled on {sps} SPS signal and Recovered signal after the matched filtering on {sps} SPS nmse calculation')
-            up_energy, recovered_energy = np.sum(np.abs(up_signal)** 2), np.sum(np.abs(recovered) ** 2)
+            up_energy, recovered_energy = energy_calc(up_signal), energy_calc(recovered)
             print(f'Signals energies: {up_energy}; {recovered_energy}')
             up_signal, recovered = normalize_energy(up_signal), normalize_energy(recovered)
-            up_energy, recovered_energy = np.sum(np.abs(up_signal)** 2), np.sum(np.abs(recovered) ** 2)
+            up_energy, recovered_energy = energy_calc(up_signal), energy_calc(recovered)
             print(f'Signals energies: {up_energy}; {recovered_energy}')
             title = f'Initial upsampled on {sps} SPS signal; Recovered signal after the matched filtering on {sps} SPS with time syncronization'
             compare_2_signals(up_signal, recovered, title)
 
-        ######## Добавление фазового шума на символьной скорости (SPS=1)
-        # Физически: суммарный эффект TX+RX гетеродинов (Wiener process)
+        ######## Phase noise adding
         if phase_noise_en:
             _sigma_dphi = np.sqrt(2 * np.pi * delta_nu / fs)  # fs = baud_rate
             _pn = np.cumsum(np.random.normal(0, _sigma_dphi, len(downsampled)))
-            # Частотный сдвиг
-            _n   = np.arange(len(downsampled))
-            _cfo = 300e6   # Гц — задаётся как параметр
+            # Frequency offset
+            _n = np.arange(len(downsampled))
+            _cfo = 300e6 
             downsampled = downsampled * np.exp(1j * (2 * np.pi * _cfo * _n / fs + _pn))
-            #downsampled = downsampled * np.exp(1j * _pn)
 
         ######## Getting symbols back on SPS = 1
         if phase_noise_en:
-            # 1. CFO компенсация (300 МГц сдвиг)
             if mod_order == 32 and inl_en == 4:
                 downsampled = downsampled * np.exp(-1j * 2 * np.pi * _cfo * np.arange(len(downsampled)) / fs)
             else:
-                downsampled, estimated_cfo = cfo_estimate_and_correct(downsampled, fs)
+                downsampled, _ = cfo_estimate_and_correct(downsampled, fs)
             
-            # Нормировка
-            rms_in   = np.sqrt(np.mean(np.abs(downsampled)**2))
+            rms_in = rms_calc(downsampled) #np.sqrt(np.mean(np.abs(downsampled)**2))
             sym_norm = downsampled / rms_in
 
-            # Нормированное созвездие
             if mod_order == 64:
                 _m = int(np.sqrt(mod_order))
                 _lv = np.arange(-(_m-1), _m, 2)
@@ -448,16 +432,14 @@ def simulate_channel_and_rx(bits, qam, shaped_signal_pure, up_signal, symbol_sig
                 const_bps = (_re + 1j * _im).flatten().astype(complex)
             else:
                 const_bps = np.array(qam.constellation, dtype=complex)
-            const_bps /= np.sqrt(np.mean(np.abs(const_bps)**2))
+            const_bps /= rms_calc(const_bps) #np.sqrt(np.mean(np.abs(const_bps)**2))
 
-            # BPS компенсация (векторизованная, блочная)
-            compensated  = bps_phase_compensation(sym_norm, const_bps, B=128, Nw=64, block=5000)
+            compensated = bps_phase_compensation(sym_norm, const_bps, B=128, Nw=64, block=5000)
             final_symbols = compensated * cf.qam_constellation_rms_calc(mod_order)
         else:
             #final_symbols = constellation_normalization(downsampled, mod_order)
             final_symbols = cf.dd_lms_equalizer(downsampled, qam, num_taps=31, mu=0.05)
-            #final_symbols = cf.dd_lms_equalizer(downsampled, symbol_signal, qam, num_taps=21, mu=0.005, train_len = len(downsampled))
-
+            
         final_nmse = nmse_calc(symbol_signal, final_symbols)
         nmse_final_arr[i] = final_nmse
 
@@ -472,18 +454,15 @@ def ber_gain_plot(ber_array, nmse_array, gain_array, mod_order, title, title1):
     plt.figure(8)
     plt.plot(gain_array, ber_array, marker = 'o', color = 'red')
     plt.grid()
-    #title = f'{mod_order}_QAM_BER(GAIN)_ADC'
     plt.title(title)
     plt.xlabel('Gain')
     plt.ylabel('BER')
-    #plt.yscale('log')
     plt.savefig(f'{title}_{mod_order}_QAM.png')
     plt.show()
 
     plt.figure(9)
     plt.plot(gain_array, nmse_array, marker = 'o', color = 'green')
     plt.grid()
-    #title = f'{mod_order}_QAM_NMSE(GAIN)_ADC'
     plt.title(title1)
     plt.xlabel('Gain')
     plt.ylabel('NMSE')
@@ -519,10 +498,6 @@ def get_snr_from_ber(target_ber: float, snr_array: list, ber_array: list) -> flo
 
 @njit(parallel=True, cache=True)
 def _bps_cost_numba(symbols_re, symbols_im, const_re, const_im, tp, cost):
-    """
-    Заполняет cost[n, b] = min_c |symbols[n]*exp(j*tp[b]) - const[c]|^2
-    Параллельно по символам (prange).
-    """
     N = symbols_re.shape[0]
     B = tp.shape[0]
     C = const_re.shape[0]
@@ -545,9 +520,9 @@ def _bps_cost_numba(symbols_re, symbols_im, const_re, const_im, tp, cost):
             cost[n, b] = min_d
 
 
-def bps_phase_compensation(symbols, const, B=128, Nw=64, block=5000):
-    N  = len(symbols)
-    tp = np.linspace(-np.pi/4, np.pi/4, B, endpoint=False).astype(np.float64)
+def bps_phase_compensation(symbols, const, B = 128, Nw = 64, block = 5000):
+    N = len(symbols)
+    tp = np.linspace(-np.pi/4, np.pi/4, B, endpoint = False).astype(np.float64)
 
     cost = np.empty((N, B), dtype=np.float32)
     _bps_cost_numba(
@@ -558,10 +533,10 @@ def bps_phase_compensation(symbols, const, B=128, Nw=64, block=5000):
         tp, cost
     )
 
-    smoothed = uniform_filter1d(cost, size=Nw, axis=0)
-    phi_raw  = tp[np.argmin(smoothed, axis=1)]
+    smoothed = uniform_filter1d(cost, size = Nw, axis = 0)
+    phi_raw = tp[np.argmin(smoothed, axis = 1)]
 
-    phi_full   = np.empty(N)
+    phi_full = np.empty(N)
     phi_offset = 0.0
     for blk in range(int(np.ceil(N / block))):
         s = blk * block
@@ -569,41 +544,30 @@ def bps_phase_compensation(symbols, const, B=128, Nw=64, block=5000):
         phi_uw = np.unwrap(phi_raw[s:e] * 4) / 4
         if blk > 0:
             raw_jump = phi_uw[0] - phi_offset
-            phi_uw   = phi_uw - np.round(raw_jump / (np.pi/2)) * (np.pi/2)
+            phi_uw = phi_uw - np.round(raw_jump / (np.pi/2)) * (np.pi/2)
         phi_full[s:e] = phi_uw
-        phi_offset    = phi_full[e - 1]
+        phi_offset = phi_full[e - 1]
 
     return symbols * np.exp(1j * phi_full)
 
 def cfo_estimate_and_correct(symbols, fs, M=4):
-    """
-    Оценка и компенсация CFO методом M-й степени.
-    fs     — символьная частота (baud_rate), Гц
-    M      — порядок (4 для QAM с 4-кратной симметрией)
-    """
     N = len(symbols)
+    powered = symbols ** M
 
-    # Убираем модуляцию возведением в M-ю степень
-    powered = symbols ** M                          # спектральная линия на M*f_cfo
+    spectrum = np.fft.fft(powered, n = N)
+    freqs = np.fft.fftfreq(N, d = 1.0 / fs)
+    peak_idx = np.argmax(np.abs(spectrum))
+    f_cfo_M = freqs[peak_idx]
+    f_cfo = f_cfo_M / M
 
-    # FFT и поиск пика
-    spectrum  = np.fft.fft(powered, n=N)
-    freqs     = np.fft.fftfreq(N, d=1.0/fs)        # Гц
-    peak_idx  = np.argmax(np.abs(spectrum))
-    f_cfo_M   = freqs[peak_idx]                     # частота пика = M * f_cfo
-    f_cfo     = f_cfo_M / M                         # истинный CFO
-
-    print(f"Оценка CFO: {f_cfo/1e6:.3f} МГц")
-
-    # Компенсация: умножаем на exp(-j*2pi*f_cfo*n/fs)
     n = np.arange(N)
     corrected = symbols * np.exp(-1j * 2 * np.pi * f_cfo * n / fs)
 
     return corrected, f_cfo
 
 def main():
-    TEST_MOD_ORDERS = [32, 64]
-    TEST_INL_VALS = [4, 2]
+    TEST_MOD_ORDERS = [64, 32]
+    TEST_INL_VALS = [2, 4]
     
     # 'MLP', 'KAN', 'CNN'
     MODELS_TO_TEST = ['CNN', 'MLP', 'KAN']         
@@ -622,13 +586,13 @@ def main():
     DATA_SAVE = 0
     DEBUG_CHECK = 0
     SEED = 100
-    PHASE_NOISE_EN = 1   # 1 = включить фазовый шум, 0 = выключить
-    DELTA_NU = 200e3     # суммарная ширина линии Tx+Rx, Гц
-    snr_arr = np.arange(14, 30, 1)
+    PHASE_NOISE_EN = 1
+    DELTA_NU = 200e3
+    snr_arr = np.arange(14, 29, 1)
 
     GAINS = {
         64: {'dac': 15 / 9, 'adc': 127 / 15},
-        32: {'dac': 2.2,    'adc': 127 / 15}
+        32: {'dac': 2.2, 'adc': 127 / 15}
     }
 
     MODEL_FLAGS = {'MLP': 1, 'KAN': 2, 'CNN': 3}

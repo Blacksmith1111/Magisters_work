@@ -19,3 +19,7 @@ qam_64_kan_2_LSB_weights.pt
 qam_64_kan_4_LSB_weights.pt
 qam_64_mlp_2_LSB_weights.pt
 qam_64_mlp_4_LSB_weights.pt
+qam_32_cnn_2_LSB_weights_1.pt
+qam_32_cnn_4_LSB_weights_1.pt
+qam_64_cnn_2_LSB_weights_1.pt
+qam_64_cnn_4_LSB_weights_1.pt
