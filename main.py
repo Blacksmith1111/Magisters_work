@@ -91,7 +91,7 @@ def complexity_vs_penalty_plot(results, fec_snr, model_params, snr_arr, folder_n
                            zorder=5, edgecolors='black', linewidths=0.8,
                            label=model_name)
                 ax.annotate(
-                    f'{model_name}\n({n_params:,} params)\n{penalty:+.2f} dB',
+                    f'{model_name}\n({n_params:,} параметров)\n{penalty:+.2f} дБ',
                     xy=(n_params, penalty),
                     xytext=(12, 10), textcoords='offset points',
                     fontsize=9, color=color,
@@ -100,10 +100,10 @@ def complexity_vs_penalty_plot(results, fec_snr, model_params, snr_arr, folder_n
                 )
                 plotted = True
 
-            ax.axhline(0, color='red', linestyle='--', linewidth=1.4, alpha=0.7, label='Ideal (no penalty)')
-            ax.set_title(f'{mod_order}-QAM | INL {inl_val} LSB', fontsize=13, fontweight='bold')
-            ax.set_xlabel('Model Complexity (Number of parameters)', fontsize=11)
-            ax.set_ylabel('FEC Penalty (dB)', fontsize=11)
+            ax.axhline(0, color='red', linestyle='--', linewidth=1.4, alpha=0.7, label='Идеальный случай (без штрафа)')
+            ax.set_title(f'{mod_order}-QAM | ИНЛ {inl_val} МЗР', fontsize=13, fontweight='bold')
+            ax.set_xlabel('Сложность модели (Количество параметров)', fontsize=11)
+            ax.set_ylabel('Штраф FEC (дБ)', fontsize=11)
             ax.xaxis.set_major_formatter(ticker.FuncFormatter(lambda x, _: f'{int(x):,}'))
             
             ax.legend(
@@ -155,7 +155,7 @@ def constellation_normalization(signal, mod_order):
     Normalizes the signal to rms = constellation rms
     '''
     constellation_rms = cf.qam_constellation_rms_calc(mod_order)
-    signal = signal / rms_calc(signal) *  constellation_rms
+    signal = signal / rms_calc(signal) * constellation_rms
     return signal
 
 def normalize_energy(s):
@@ -171,16 +171,16 @@ def compare_2_signals(signal_1, signal_2, title):
     
     mid = len(signal_1) // 2
     plt.figure(100)
-    plt.stem(signal_1.real[mid : mid + 100], linefmt='r-', label = f'Initial, real part, nmse = {nmse}')
-    plt.stem(signal_2.real[mid : mid + 100], linefmt='g-', label = f'Processed, real part, nmse = {nmse}')
+    plt.stem(signal_1.real[mid : mid + 100], linefmt='r-', label = f'Исходный, действ. часть, nmse = {nmse:.2f}')
+    plt.stem(signal_2.real[mid : mid + 100], linefmt='g-', label = f'Обработанный, действ. часть, nmse = {nmse:.2f}')
     plt.legend()
     plt.title(title)
     plt.grid()
     plt.show()
 
     plt.figure(101)
-    plt.stem(signal_1.imag[mid : mid + 100], linefmt='r-', label = f'Initial, imaginary part, nmse = {nmse}')
-    plt.stem(signal_2.imag[mid : mid + 100], linefmt='g-', label = f'Processed, imaginary part, nmse = {nmse}')
+    plt.stem(signal_1.imag[mid : mid + 100], linefmt='r-', label = f'Исходный, мним. часть, nmse = {nmse:.2f}')
+    plt.stem(signal_2.imag[mid : mid + 100], linefmt='g-', label = f'Обработанный, мним. часть, nmse = {nmse:.2f}')
     plt.legend()
     plt.title(title)
     plt.grid()
@@ -204,7 +204,7 @@ def pulse_shaping_check(shaped_signal, up_signal, ROLLOFF, FILTER_SPAN, SPS, FS,
     print(f'Signals energies: {shaped_energy}; {recovered_energy}')
     nmse = nmse_calc(up_signal, recovered) 
     print(f'NMSE = {nmse} dB')
-    title = 'Signal 4 SPS before the pulse shaping; Signal 4 SPS after the matched filtering'
+    title = 'Сигнал 4 SPS до формирования импульса;\nСигнал 4 SPS после согласованной фильтрации'
     compare_2_signals(up_signal, recovered, title)
 
 def generate_tx_base(bits_num, mod_order, sps, rolloff, filter_span, fs, ts, debug_check = 1,
@@ -216,8 +216,8 @@ def generate_tx_base(bits_num, mod_order, sps, rolloff, filter_span, fs, ts, deb
     symbol_signal = qam.modulate(bits)
     up_signal = cf.upsample(symbol_signal, sps)
     if debug_check:
-        cf.spectrum_plot(symbol_signal, Fs = fs, title = 'Initial symbol signal spectrum', plt_en = 1)
-        cf.spectrum_plot(up_signal, Fs = sps * fs, title = 'Initial upsampled to 4 SPS symbol signal spectrum', plt_en = 1)
+        cf.spectrum_plot(symbol_signal, Fs = fs, title = 'Спектр исходного символьного сигнала', plt_en = 1)
+        cf.spectrum_plot(up_signal, Fs = sps * fs, title = 'Спектр исходного сигнала, передискретизированного до 4 SPS', plt_en = 1)
     
     shaped_signal = cf.pulse_shaping(
         up_signal,
@@ -289,7 +289,7 @@ def generate_tx_base(bits_num, mod_order, sps, rolloff, filter_span, fs, ts, deb
         np.save(f'model_targets_{mod_order}_qam.npy', centered_shaped)
     
     ### Shaped signal spectrum check
-    cf.spectrum_plot(shaped_signal, Fs = sps * fs, title = 'Spectrum after the pulse shaping', plt_en = debug_check)
+    cf.spectrum_plot(shaped_signal, Fs = sps * fs, title = 'Спектр после формирования импульса', plt_en = debug_check)
     ###
     if debug_check:
         ### TX Pulse shaping block check, NMSE = -67 dB
@@ -341,14 +341,14 @@ def simulate_channel_and_rx(bits, qam, shaped_signal_pure, up_signal, symbol_sig
     shaped_upsampled = cf.upsample(current_shaped, sps = sps_2)
     ### Shaped signal spectrum check
     if debug_check:
-            cf.spectrum_plot(shaped_upsampled, Fs = sps_2 * sps * fs, title = f'Spectrum after the pulse shaping and upsampling, {sps * sps_2} SPS', plt_en = 1)
+            cf.spectrum_plot(shaped_upsampled, Fs = sps_2 * sps * fs, title = f'Спектр после формирования импульса и передискретизации, {sps * sps_2} SPS', plt_en = 1)
     ###
         
     ### Add a LPF to shaped_upsampled
     shaped_upsampled_filtered = cf.apply_fixed_lpf(shaped_upsampled, fs / 2 * (1 + rolloff) * 1.5 , fs * sps_2 * sps) #* 1.5
     ### Shaped upsampled and filtered through LPF signal spectrum check
     if debug_check:
-            cf.spectrum_plot(shaped_upsampled_filtered, Fs = sps_2 * sps * fs, title = 'Spectrum after the pulse shaping and upsampling to 40 SPS, then adding a LPF', plt_en = 1)
+            cf.spectrum_plot(shaped_upsampled_filtered, Fs = sps_2 * sps * fs, title = 'Спектр после передискретизации до 40 SPS и применения ФНЧ', plt_en = 1)
     ###
 
     ######## Upconversion
@@ -380,7 +380,7 @@ def simulate_channel_and_rx(bits, qam, shaped_signal_pure, up_signal, symbol_sig
             shaped_up_energy, recovered_energy = energy_calc(shaped_upsampled), energy_calc(recovered)
             print(f'Signals energies: {shaped_up_energy}; {recovered_energy}')
 
-            title = f'Shaped, upsampled to {sps * sps_2} SPS, before LPF signal; Recovered signal on {sps * sps_2} SPS after LPF with time syncronization'
+            title = f'Сформированный сигнал ({sps * sps_2} SPS) до ФНЧ;\nВосстановленный сигнал ({sps * sps_2} SPS) после ФНЧ с синхронизацией'
             compare_2_signals(shaped_upsampled, recovered, title)
 
         ### ADC quantizer
@@ -403,7 +403,7 @@ def simulate_channel_and_rx(bits, qam, shaped_signal_pure, up_signal, symbol_sig
             up_signal, recovered = normalize_energy(up_signal), normalize_energy(recovered)
             up_energy, recovered_energy = energy_calc(up_signal), energy_calc(recovered)
             print(f'Signals energies: {up_energy}; {recovered_energy}')
-            title = f'Initial upsampled on {sps} SPS signal; Recovered signal after the matched filtering on {sps} SPS with time syncronization'
+            title = f'Исходный сигнал ({sps} SPS);\nВосстановленный сигнал после согласованной фильтрации ({sps} SPS)'
             compare_2_signals(up_signal, recovered, title)
 
         ######## Phase noise adding
@@ -455,7 +455,7 @@ def ber_gain_plot(ber_array, nmse_array, gain_array, mod_order, title, title1):
     plt.plot(gain_array, ber_array, marker = 'o', color = 'red')
     plt.grid()
     plt.title(title)
-    plt.xlabel('Gain')
+    plt.xlabel('Коэффициент усиления')
     plt.ylabel('BER')
     plt.savefig(f'{title}_{mod_order}_QAM.png')
     plt.show()
@@ -464,7 +464,7 @@ def ber_gain_plot(ber_array, nmse_array, gain_array, mod_order, title, title1):
     plt.plot(gain_array, nmse_array, marker = 'o', color = 'green')
     plt.grid()
     plt.title(title1)
-    plt.xlabel('Gain')
+    plt.xlabel('Коэффициент усиления')
     plt.ylabel('NMSE')
     plt.savefig(f'{title1}_{mod_order}_QAM.png')
     plt.show()
@@ -588,7 +588,7 @@ def main():
     SEED = 100
     PHASE_NOISE_EN = 1
     DELTA_NU = 200e3
-    snr_arr = np.arange(14, 29, 1)
+    snr_arr = np.arange(14, 30, 1)
 
     GAINS = {
         64: {'dac': 15 / 9, 'adc': 127 / 15},
@@ -678,10 +678,10 @@ def main():
         fec_snr[(m_order, i_val, m_name)] = snr_at_fec
 
     print("\n" + "=" * 70)
-    print(f"{'FEC PENALTY TABLE':^70}")
-    print(f"{'(SNR required at BER = 3.84e-3)':^70}")
+    print(f"{'ТАБЛИЦА ШТРАФОВ FEC':^70}")
+    print(f"{'(Требуемый SNR при BER = 3.84e-3)':^70}")
     print("=" * 70)
-    print(f"{'Modulation':<12} {'INL':>5} {'Case':<10} {'SNR@FEC':>10} {'Penalty':>10}")
+    print(f"{'Модуляция':<12} {'INL':>5} {'Модель':<10} {'SNR@FEC':>10} {'Штраф':>10}")
     print("-" * 70)
 
     for mod_order in TEST_MOD_ORDERS:
@@ -690,8 +690,8 @@ def main():
             for m_name in ['No_DPD'] + MODELS_TO_TEST:
                 snr_val = fec_snr.get((mod_order, inl_val, m_name), np.nan)
                 penalty = snr_val - ideal_snr if not np.isnan(snr_val) else np.nan
-                penalty_str = f"+{penalty:.2f} dB" if not np.isnan(penalty) else "N/A"
-                snr_str = f"{snr_val:.2f} dB"  if not np.isnan(snr_val) else "N/A"
+                penalty_str = f"+{penalty:.2f} дБ" if not np.isnan(penalty) else "Н/Д"
+                snr_str = f"{snr_val:.2f} дБ"  if not np.isnan(snr_val) else "Н/Д"
                 print(f"{mod_order}-QAM      {inl_val:>5} {m_name:<10} {snr_str:>10} {penalty_str:>10}")
         print("-" * 70)
 
@@ -712,25 +712,25 @@ def main():
             penalty = snr_val - ideal_snr
 
             if m_name == 'Ideal':
-                label = f'{m_order}-QAM  Ideal (No INL) | SNR@FEC={snr_val:.1f} dB'
+                label = f'{m_order}-QAM  Идеальный случай (без ИНЛ) | SNR@FEC={snr_val:.1f} дБ'
             elif m_name == 'No_DPD':
-                label = (f'{m_order}-QAM  INL {inl_val} LSB | '
-                         f'SNR@FEC={snr_val:.1f} dB  Penalty=+{penalty:.1f} dB')
+                label = (f'{m_order}-QAM  ИНЛ {inl_val} МЗР | '
+                         f'SNR@FEC = {snr_val:.1f} дБ  Штраф = +{penalty:.1f} дБ')
             else:
-                label = (f'{m_order}-QAM  INL {inl_val} LSB + {m_name} | '
-                         f'SNR@FEC={snr_val:.1f} dB  Penalty=+{penalty:.1f} dB')
+                label = (f'{m_order}-QAM  ИНЛ {inl_val} МЗР + {m_name} | '
+                         f'SNR@FEC={snr_val:.1f} дБ  Штраф = +{penalty:.1f} дБ')
 
             ax.plot(snr_arr, data['ber'], marker=marker, linestyle=ls, color=color, label=label)
 
             if not np.isnan(snr_val):
                 ax.axvline(x=snr_val, color=color, linestyle=':', linewidth=1.2, alpha=0.55)
 
-        ax.axhline(y = FEC_LIMIT, color = 'black', linestyle = ':', linewidth = 2, label = f'FEC Limit ({FEC_LIMIT:.2e})')
+        ax.axhline(y = FEC_LIMIT, color = 'black', linestyle = ':', linewidth = 2, label = f'Предел FEC ({FEC_LIMIT:.2e})')
         ax.set_yscale('log')
         ax.set_ylim(bottom = 1e-5, top = 1e-2)
-        ax.set_xlabel('SNR (dB)', fontsize = 12)
+        ax.set_xlabel('SNR (дБ)', fontsize = 12)
         ax.set_ylabel('BER', fontsize = 12)
-        ax.set_title(f'BER vs SNR | 32-QAM & 64-QAM | INL {inl_val} LSB', fontsize = 13)
+        ax.set_title(f'Зависимость BER от SNR | 32-QAM и 64-QAM | ИНЛ {inl_val} МЗР', fontsize = 13)
         ax.legend(loc = 'lower left', fontsize = 9)
         ax.grid(True, which = 'both', ls = '--', alpha = 0.6)
         fig.tight_layout()
@@ -748,11 +748,11 @@ def main():
             color = COLOR_MAP.get(m_name, 'black')
 
             if m_name == 'Ideal':
-                label = f'{m_order}-QAM  Ideal (No INL)'
+                label = f'{m_order}-QAM  Идеальный случай (без ИНЛ)'
             elif m_name == 'No_DPD':
-                label = f'{m_order}-QAM  INL {inl_val} LSB'
+                label = f'{m_order}-QAM  ИНЛ {inl_val} МЗР'
             else:
-                label = f'{m_order}-QAM  INL {inl_val} LSB + {m_name}'
+                label = f'{m_order}-QAM  ИНЛ {inl_val} МЗР + {m_name}'
             
             ### Save the final constellation
             cf.constellation_plot(data['symbols'], m_order, title = label, 
@@ -760,9 +760,9 @@ def main():
 
             ax2.plot(snr_arr, data['nmse'], marker = marker, linestyle = ls, color = color, label = label)
 
-        ax2.set_xlabel('SNR (dB)', fontsize = 12)
-        ax2.set_ylabel('NMSE (dB)', fontsize = 12)
-        ax2.set_title(f'NMSE vs SNR | 32-QAM & 64-QAM | INL {inl_val} LSB', fontsize = 13)
+        ax2.set_xlabel('SNR (дБ)', fontsize = 12)
+        ax2.set_ylabel('NMSE (дБ)', fontsize = 12)
+        ax2.set_title(f'Зависимость NMSE от SNR | 32-QAM и 64-QAM | ИНЛ {inl_val} МЗР', fontsize = 13)
         ax2.legend(loc = 'lower left', fontsize = 9)
         ax2.grid(True, ls = '--', alpha = 0.6)
         fig2.tight_layout()
@@ -776,7 +776,7 @@ def main():
         for ax3, mod_order in zip(axes, TEST_MOD_ORDERS):
             ideal_snr = fec_snr.get((mod_order, 0, 'Ideal'), np.nan)
             cases  = ['No_DPD'] + MODELS_TO_TEST
-            labels = [f'No DPD'] + MODELS_TO_TEST
+            labels = ['Без DPD'] + MODELS_TO_TEST
             penalties = []
             bar_colors = []
             for case in cases:
@@ -790,21 +790,21 @@ def main():
             for bar, pen in zip(bars, penalties):
                 ypos = bar.get_height() + 0.03 if pen >= 0 else bar.get_height() - 0.15
                 ax3.text(bar.get_x() + bar.get_width() / 2, ypos,
-                         f'+{pen:.2f} dB' if pen >= 0 else f'{pen:.2f} dB',
+                         f'+{pen:.2f} дБ' if pen >= 0 else f'{pen:.2f} дБ',
                          ha='center', va='bottom', fontsize=10, fontweight='bold')
 
             ax3.axhline(0, color='red', linewidth=1.2, linestyle='--', alpha=0.7)
-            ax3.set_title(f'{mod_order}-QAM | INL {inl_val} LSB', fontsize=12)
-            ax3.set_ylabel('FEC Penalty (dB)', fontsize=11)
-            ax3.set_xlabel('Predistorter', fontsize=11)
+            ax3.set_title(f'{mod_order}-QAM | ИНЛ {inl_val} МЗР', fontsize=12)
+            ax3.set_ylabel('Штраф FEC (дБ)', fontsize=11)
+            ax3.set_xlabel('Предысказитель (Модель)', fontsize=11)
             ax3.grid(axis='y', ls='--', alpha=0.5)
 
             y_min, y_max = ax3.get_ylim()
             ax3.set_ylim(y_min, y_max * 1.25 if y_max > 0 else y_max)
 
         fig3.suptitle(
-            f'FEC Penalty vs Predistorter | INL {inl_val} LSB\n'
-            f'(SNR relative to ideal, BER = {FEC_LIMIT:.2e})',
+            f'Штраф FEC для разных моделей | ИНЛ {inl_val} МЗР\n'
+            f'(SNR относительно идеального, BER = {FEC_LIMIT:.2e})',
             fontsize=13
         )
         fig3.tight_layout()

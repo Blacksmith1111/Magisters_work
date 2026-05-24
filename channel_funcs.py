@@ -46,12 +46,12 @@ def get_ideal_constellation(mod_order: int) -> np.ndarray:
 
 def constellation_plot(modulated_signal: np.ndarray, mod_order: int, title: str, show_decision_boundaries: bool = True, save_file:str = 'None') -> None:
     plt.figure(figsize=(7, 7))
-    plt.scatter(modulated_signal.real, modulated_signal.imag, s=5, alpha=0.5, label='Received Signal')
+    plt.scatter(modulated_signal.real, modulated_signal.imag, s=5, alpha=0.5, label='Полученный сигнал')
     
     reference_points = get_ideal_constellation(mod_order)
     if reference_points is not None:
         plt.scatter(reference_points.real, reference_points.imag, 
-        s=30, color='red', marker='o', edgecolors='black', label=f'Ideal {mod_order}-QAM')
+        s=30, color='red', marker='o', edgecolors='black', label=f'Идеальное созвездие {mod_order}-QAM')
         
     if show_decision_boundaries:
         if mod_order == 64:
