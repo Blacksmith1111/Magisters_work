@@ -12,6 +12,7 @@ import os
 from cnn_model_improved import CNN_DPD_Micro, inference_cnn
 import matplotlib.ticker as ticker
 from numba import njit, prange
+from time import perf_counter
 
 
 DEVICE = 'cuda:0'
@@ -103,7 +104,7 @@ def complexity_vs_penalty_plot(results, fec_snr, model_params, snr_arr, folder_n
             ax.axhline(0, color='red', linestyle='--', linewidth=1.4, alpha=0.7, label='Идеальный случай (без штрафа)')
             ax.set_title(f'{mod_order}-QAM | ИНЛ {inl_val} МЗР', fontsize=13, fontweight='bold')
             ax.set_xlabel('Сложность модели (Количество параметров)', fontsize=11)
-            ax.set_ylabel('Штраф FEC (дБ)', fontsize=11)
+            ax.set_ylabel('Штраф на уровне FEC (дБ)', fontsize=11)
             ax.xaxis.set_major_formatter(ticker.FuncFormatter(lambda x, _: f'{int(x):,}'))
             
             ax.legend(
@@ -366,9 +367,16 @@ def simulate_channel_and_rx(bits, qam, shaped_signal_pure, up_signal, symbol_sig
 
         ######### ADC with distortions
         baseband_after_lpf = time_syncronization(shaped_upsampled, baseband_signal, time_delay = 200)
-        downsampled = cf.downsample(baseband_after_lpf, sps_2)
-        recovered = cf.upsample(downsampled, sps_2)
+        if phase_noise_en:
+            _sigma_dphi = np.sqrt(2 * np.pi * delta_nu / (fs * sps * sps_2))  # fs = baud_rate
+            _pn = np.cumsum(np.random.normal(0, _sigma_dphi, len(baseband_after_lpf)))
+            # Frequency offset
+            _n = np.arange(len(baseband_after_lpf))
+            _cfo = 300e6 
+            baseband_after_lpf = baseband_after_lpf * np.exp(1j * (2 * np.pi * _cfo * _n / (fs * sps * sps_2) + _pn))
 
+        downsampled_raw = cf.downsample(baseband_after_lpf, sps_2)
+        recovered = cf.upsample(downsampled_raw, sps_2)
 
 
         if debug_check:
@@ -386,16 +394,20 @@ def simulate_channel_and_rx(bits, qam, shaped_signal_pure, up_signal, symbol_sig
         ### ADC quantizer
         if adc_gain != 0:
             #print(f'Max values of the real and imag components before the ADC: {np.max(np.abs(downsampled.real))}; {np.max(np.abs(downsampled.imag))}')
-            downsampled = cf.quantizer(downsampled, resolution = 8, gain = adc_gain)
+            downsampled_after_adc = cf.quantizer(downsampled_raw, resolution = 8, gain = adc_gain)
             #print(f'Max values of the real and imag components after the ADC: {np.max(np.abs(downsampled.real))}; {np.max(np.abs(downsampled.imag))}')
 
         ######## Matched filter
-        downsampled_shaped = cf.pulse_shaping(downsampled, rolloff, filter_span, sps, ts, fs * sps, plt_en=0)
         
-        ### Correlation and downsampling
+        downsampled_shaped = cf.pulse_shaping(downsampled_after_adc, rolloff, filter_span, sps, ts, fs * sps, plt_en=0)
+        
+        '''### Correlation and downsampling
         recovered = time_syncronization(up_signal, downsampled_shaped, time_delay = 128)
-        downsampled = cf.downsample(recovered, sps)
+        downsampled = cf.downsample(recovered, sps)'''
         if debug_check:
+            ### Correlation and downsampling
+            recovered = time_syncronization(up_signal, downsampled_shaped, time_delay = 128)
+            downsampled = cf.downsample(recovered, sps)
             recovered = cf.upsample(downsampled, sps)
             print(f'Initial upsampled on {sps} SPS signal and Recovered signal after the matched filtering on {sps} SPS nmse calculation')
             up_energy, recovered_energy = energy_calc(up_signal), energy_calc(recovered)
@@ -406,21 +418,30 @@ def simulate_channel_and_rx(bits, qam, shaped_signal_pure, up_signal, symbol_sig
             title = f'Исходный сигнал ({sps} SPS);\nВосстановленный сигнал после согласованной фильтрации ({sps} SPS)'
             compare_2_signals(up_signal, recovered, title)
 
-        ######## Phase noise adding
+        '''######## Phase noise adding
         if phase_noise_en:
             _sigma_dphi = np.sqrt(2 * np.pi * delta_nu / fs)  # fs = baud_rate
             _pn = np.cumsum(np.random.normal(0, _sigma_dphi, len(downsampled)))
             # Frequency offset
             _n = np.arange(len(downsampled))
             _cfo = 300e6 
-            downsampled = downsampled * np.exp(1j * (2 * np.pi * _cfo * _n / fs + _pn))
+            downsampled = downsampled * np.exp(1j * (2 * np.pi * _cfo * _n / fs + _pn))'''
 
         ######## Getting symbols back on SPS = 1
         if phase_noise_en:
-            if mod_order == 32 and inl_en == 4:
-                downsampled = downsampled * np.exp(-1j * 2 * np.pi * _cfo * np.arange(len(downsampled)) / fs)
+            if mod_order == 32:# and inl_en == 4:
+                downsampled = downsampled_after_adc * np.exp(-1j * 2 * np.pi * _cfo * np.arange(len(downsampled_after_adc)) / (fs * sps))
             else:
-                downsampled, _ = cfo_estimate_and_correct(downsampled, fs)
+                ### First take for the signal
+                downsampled_1_sps = cf.downsample(downsampled_shaped, sps)
+                _, freq_offset = cfo_estimate_and_correct(downsampled_1_sps, fs)
+                downsampled = downsampled_after_adc * np.exp(-1j * 2 * np.pi * freq_offset * np.arange(len(downsampled_after_adc)) / (fs * sps))
+            
+            downsampled = cf.pulse_shaping(downsampled, rolloff, filter_span, sps, ts, fs * sps, plt_en=0)
+            ### Correlation and downsampling
+            recovered = time_syncronization(up_signal, downsampled, time_delay = 128)
+            downsampled = cf.downsample(recovered, sps)
+
             
             rms_in = rms_calc(downsampled) #np.sqrt(np.mean(np.abs(downsampled)**2))
             sym_norm = downsampled / rms_in
@@ -562,6 +583,7 @@ def cfo_estimate_and_correct(symbols, fs, M=4):
 
     n = np.arange(N)
     corrected = symbols * np.exp(-1j * 2 * np.pi * f_cfo * n / fs)
+    print(f'Found freq offset is {f_cfo / 1e6} MHz')
 
     return corrected, f_cfo
 
@@ -598,7 +620,7 @@ def main():
     MODEL_FLAGS = {'MLP': 1, 'KAN': 2, 'CNN': 3}
     
     results = {}
-
+    start = perf_counter()
     for mod_order in TEST_MOD_ORDERS:
         print(f"\n{'='*40}\nSTARTING SIMULATION FOR {mod_order}-QAM\n{'='*40}")
         
@@ -657,7 +679,8 @@ def main():
                 )
                 results[(mod_order, inl_val, model_name)] = {'ber': bers, 'nmse': nmses, 'symbols': symbols}
 
-
+    finish = perf_counter()
+    print(f'Duration of the simulation is {(finish - start) // 60} m : {(finish - start) % 60} s')
     folder_name = 'Pictures'
     if not os.path.exists(folder_name):
         os.makedirs(folder_name, exist_ok=True)
@@ -712,25 +735,25 @@ def main():
             penalty = snr_val - ideal_snr
 
             if m_name == 'Ideal':
-                label = f'{m_order}-QAM  Идеальный случай (без ИНЛ) | SNR@FEC={snr_val:.1f} дБ'
+                label = f'{m_order}-QAM  Идеальный случай (без ИНЛ) | ОСШ@FEC={snr_val:.2f} дБ'
             elif m_name == 'No_DPD':
                 label = (f'{m_order}-QAM  ИНЛ {inl_val} МЗР | '
-                         f'SNR@FEC = {snr_val:.1f} дБ  Штраф = +{penalty:.1f} дБ')
+                         f'SNR@FEC = {snr_val:.2f} дБ  Штраф = +{penalty:.2f} дБ')
             else:
                 label = (f'{m_order}-QAM  ИНЛ {inl_val} МЗР + {m_name} | '
-                         f'SNR@FEC={snr_val:.1f} дБ  Штраф = +{penalty:.1f} дБ')
+                         f'SNR@FEC={snr_val:.2f} дБ  Штраф = +{penalty:.2f} дБ')
 
             ax.plot(snr_arr, data['ber'], marker=marker, linestyle=ls, color=color, label=label)
 
             if not np.isnan(snr_val):
                 ax.axvline(x=snr_val, color=color, linestyle=':', linewidth=1.2, alpha=0.55)
 
-        ax.axhline(y = FEC_LIMIT, color = 'black', linestyle = ':', linewidth = 2, label = f'Предел FEC ({FEC_LIMIT:.2e})')
+        ax.axhline(y = FEC_LIMIT, color = 'black', linestyle = ':', linewidth = 2, label = f'Уровень FEC ({FEC_LIMIT:.2e})')
         ax.set_yscale('log')
         ax.set_ylim(bottom = 1e-5, top = 1e-2)
-        ax.set_xlabel('SNR (дБ)', fontsize = 12)
-        ax.set_ylabel('BER', fontsize = 12)
-        ax.set_title(f'Зависимость BER от SNR | 32-QAM и 64-QAM | ИНЛ {inl_val} МЗР', fontsize = 13)
+        ax.set_xlabel('ОСШ (дБ)', fontsize = 12)
+        ax.set_ylabel('КОБ', fontsize = 12)
+        ax.set_title(f'Зависимость КОБ от ОСШ | 32-QAM и 64-QAM | ИНЛ {inl_val} МЗР', fontsize = 13)
         ax.legend(loc = 'lower left', fontsize = 9)
         ax.grid(True, which = 'both', ls = '--', alpha = 0.6)
         fig.tight_layout()
@@ -804,7 +827,7 @@ def main():
 
         fig3.suptitle(
             f'Штраф FEC для разных моделей | ИНЛ {inl_val} МЗР\n'
-            f'(SNR относительно идеального, BER = {FEC_LIMIT:.2e})',
+            f'(ОСШ относительно идеального, КОБ = {FEC_LIMIT:.2e})',
             fontsize=13
         )
         fig3.tight_layout()
