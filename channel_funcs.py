@@ -77,7 +77,7 @@ def constellation_plot(modulated_signal: np.ndarray, mod_order: int, title: str,
     axis_limit = 9 if mod_order == 64 else 7
     plt.xlim(-axis_limit, axis_limit)
     plt.ylim(-axis_limit, axis_limit)
-    if save_file is not 'None': 
+    if save_file != 'None': 
         plt.savefig(save_file)
     plt.close('all')
     #plt.show()
@@ -142,16 +142,20 @@ def ber_calc(initial_bits: np.ndarray, final_bits: np.ndarray) -> float:
 
 def INL(full_scale: np.ndarray, lsb_amplitude: float, plt_en: bool = 0) -> np.ndarray:
     
-    inl_vals = lsb_amplitude * np.sin(2 * np.pi * (full_scale - full_scale[0]) / (len(full_scale) - 1))
 
+    inl_vals = lsb_amplitude * np.sin(2 * np.pi * (full_scale - full_scale[0]) / (len(full_scale) - 1))
+    lsb_amplitude = lsb_amplitude if lsb_amplitude < 2 else 2.5
     if plt_en:
-        plt.figure(figsize=(8, 3))
-        plt.plot(full_scale, inl_vals)
-        plt.xlabel("DAC Input Code")
-        plt.ylabel("INL (LSB)")
-        plt.title(f"INL Profile (Max = {lsb_amplitude} LSB)")
+        plt.figure(90, figsize=(16, 6))
+        plt.plot(full_scale, lsb_amplitude * np.sin(2 * np.pi * (full_scale - full_scale[0]) / (len(full_scale) - 1)))
+        plt.xlabel("Входной код ЦАП", fontsize = 16)
+        plt.ylabel("ИНЛ (МЗР)", fontsize = 16)
+        plt.title(f"ИНЛ ЦАП", fontsize = 18)
+        plt.tick_params(axis='both', which='major', labelsize=14)
         plt.grid(True)
-        plt.show()
+        plt.tight_layout()
+        plt.savefig(rf'D:\prog\Magisters_work\Pictures\INL_with_LSB = {lsb_amplitude}.png')
+        plt.close(90)
 
     return inl_vals
 
@@ -166,7 +170,7 @@ def quantizer(signal: np.ndarray, resolution: int, gain: float, inl_en: float = 
     if inl_en > 0:
 
         full_scale = np.arange(left_border, right_border + 1, 1)
-        inl_array = INL(full_scale, lsb_amplitude = inl_en, plt_en=0)
+        inl_array = INL(full_scale, lsb_amplitude = inl_en, plt_en = 1)
         i_indices = i_quantized - left_border
         q_indices = q_quantized - left_border
         

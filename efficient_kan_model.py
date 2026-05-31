@@ -12,24 +12,25 @@ DEVICE = "cuda:0" if torch.cuda.is_available() else "cpu"
 WINDOW_SIZE = 1
 INPUT_DIM   = 2 * WINDOW_SIZE
 
-'''class KAN_DPD(nn.Module):
+'''KAN_model = KAN(layers_hidden=[INPUT_DIM, 4, 2],
+                grid_size=5, #10
+                spline_order=3,
+                grid_range=[-1.2, 1.2])'''
+
+class KAN_DPD(nn.Module):
     def __init__(self):
         super().__init__()
-        self.kan = KAN(layers_hidden=[INPUT_DIM, 4, 2],
-                       grid_size=10,
-                       spline_order=3,
-                       grid_range=[-1.2, 1.2])
-    
+        self.kan = KAN(
+            layers_hidden=[INPUT_DIM, 4, 2],
+            grid_size=5,
+            spline_order=3,
+            grid_range=[-1.2, 1.2]
+        )
+
     def forward(self, x):
         return x + self.kan(x)
 
-KAN_model = KAN_DPD()'''
-
-KAN_model = KAN(layers_hidden=[INPUT_DIM, 4, 2],
-                grid_size=10,
-                spline_order=3,
-                grid_range=[-1.2, 1.2])
-
+KAN_model = KAN_DPD()
 
 def create_windows(data, window_size):
     dim = data.shape[1]
@@ -208,20 +209,20 @@ def main(train_en=0, lsb=2, mod_order=64):
             if lsb == 2:
                 objects = np.load(obj_file_64_qam_2lsb)[1000:1000 + 201000]
                 targets = np.load(trg_file_64_qam)[1000:1000 + 201000]
-                weights_file = "qam_64_kan_2_LSB_weights.pt"
+                weights_file = "qam_64_kan_2_LSB_weights_2.pt"
             elif lsb == 4:
                 objects = np.load(obj_file_64_qam_4lsb)[1000:1000 + 201000]
                 targets = np.load(trg_file_64_qam)[1000:1000 + 201000]
-                weights_file = "qam_64_kan_4_LSB_weights.pt"
+                weights_file = "qam_64_kan_4_LSB_weights_2.pt"
         else:
             if lsb == 2:
                 objects = np.load(obj_file_32_qam_2lsb)[1000:1000 + 201000]
                 targets = np.load(trg_file_32_qam)[1000:1000 + 201000]
-                weights_file = "qam_32_kan_2_LSB_weights.pt"
+                weights_file = "qam_32_kan_2_LSB_weights_2.pt"
             elif lsb == 4:
                 objects = np.load(obj_file_32_qam_4lsb)[1000:1000 + 201000]
                 targets = np.load(trg_file_32_qam)[1000:1000 + 201000]
-                weights_file = "qam_32_kan_4_LSB_weights.pt"
+                weights_file = "qam_32_kan_4_LSB_weights_2.pt"
 
     except FileNotFoundError:
         print('Data files not found')
@@ -279,7 +280,7 @@ def main(train_en=0, lsb=2, mod_order=64):
 
             _, preds_norm, targets_norm_out = test(model, test_dataloader, criterion)
 
-            preds       = preds_norm * max_val
+            preds = preds_norm * max_val
             targets_out = targets_norm_out * max_val
 
             print_mae_comparison(x_test_raw, preds, targets_out, max_val)
@@ -299,4 +300,3 @@ if __name__ == "__main__":
     # 160 Parameters/ 240
     for lsb, mod in test_cases:
         main(train_en = TRAIN_EN, lsb = lsb, mod_order = mod)
-    #main(train_en=TRAIN_EN, lsb=LSB, mod_order=MOD_ORDER)

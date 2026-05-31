@@ -34,19 +34,19 @@ model_params_num = {
 
 ### 64 QAM weights
 WEIGHTS_FILE_64_QAM_MLP_2_LSB = 'qam_64_mlp_2_LSB_weights.pt'
-WEIGHTS_FILE_64_QAM_KAN_2_LSB = 'qam_64_kan_2_LSB_weights.pt'
-WEIGHTS_FILE_64_QAM_CNN_2_LSB = 'qam_64_cnn_2_LSB_weights_1.pt'
+WEIGHTS_FILE_64_QAM_KAN_2_LSB = 'qam_64_kan_2_LSB_weights_2.pt'
+WEIGHTS_FILE_64_QAM_CNN_2_LSB = 'qam_64_cnn_2_LSB_weights_2.pt'
 WEIGHTS_FILE_64_QAM_MLP_4_LSB = 'qam_64_mlp_4_LSB_weights.pt'
-WEIGHTS_FILE_64_QAM_KAN_4_LSB = 'qam_64_kan_4_lsb_weights.pt'
-WEIGHTS_FILE_64_QAM_CNN_4_LSB = 'qam_64_cnn_4_LSB_weights_1.pt'
+WEIGHTS_FILE_64_QAM_KAN_4_LSB = 'qam_64_kan_4_lsb_weights_2.pt' # 1
+WEIGHTS_FILE_64_QAM_CNN_4_LSB = 'qam_64_cnn_4_LSB_weights_2.pt'
 
 ### 32 QAM weights
 WEIGHTS_FILE_32_QAM_MLP_2_LSB = 'qam_32_mlp_2_LSB_weights.pt'
 WEIGHTS_FILE_32_QAM_MLP_4_LSB = 'qam_32_mlp_4_LSB_weights.pt'
-WEIGHTS_FILE_32_QAM_KAN_2_LSB = 'qam_32_kan_2_LSB_weights.pt'
-WEIGHTS_FILE_32_QAM_KAN_4_LSB = 'qam_32_kan_4_LSB_weights.pt'
-WEIGHTS_FILE_32_QAM_CNN_2_LSB = 'qam_32_cnn_2_LSB_weights_1.pt'
-WEIGHTS_FILE_32_QAM_CNN_4_LSB = 'qam_32_cnn_4_LSB_weights_1.pt'
+WEIGHTS_FILE_32_QAM_KAN_2_LSB = 'qam_32_kan_2_LSB_weights_2.pt' # 1
+WEIGHTS_FILE_32_QAM_KAN_4_LSB = 'qam_32_kan_4_LSB_weights_2.pt'
+WEIGHTS_FILE_32_QAM_CNN_2_LSB = 'qam_32_cnn_2_LSB_weights_2.pt'
+WEIGHTS_FILE_32_QAM_CNN_4_LSB = 'qam_32_cnn_4_LSB_weights_2.pt'
 
 
 SIMULATION_WEIGHTS = {
@@ -69,6 +69,7 @@ def complexity_vs_penalty_plot(results, fec_snr, model_params, snr_arr, folder_n
     MARKER_MAP = {'MLP': 'o', 'CNN': 'o', 'KAN': 'o'}
 
     for inl_val in inl_vals:
+        inl_temp = 1.25 if inl_val < 2.5 else 2.5
         for mod_order in mod_orders:
             fig, ax = plt.subplots(figsize=(7, 6))
 
@@ -92,7 +93,7 @@ def complexity_vs_penalty_plot(results, fec_snr, model_params, snr_arr, folder_n
                            zorder=5, edgecolors='black', linewidths=0.8,
                            label=model_name)
                 ax.annotate(
-                    f'{model_name}\n({n_params:,} параметров)\n{penalty:+.2f} дБ',
+                    f'Число параметров: {model_name}\n({n_params:,})\n{penalty:+.2f} дБ',
                     xy=(n_params, penalty),
                     xytext=(12, 10), textcoords='offset points',
                     fontsize=9, color=color,
@@ -102,7 +103,7 @@ def complexity_vs_penalty_plot(results, fec_snr, model_params, snr_arr, folder_n
                 plotted = True
 
             ax.axhline(0, color='red', linestyle='--', linewidth=1.4, alpha=0.7, label='Идеальный случай (без штрафа)')
-            ax.set_title(f'{mod_order}-QAM | ИНЛ {inl_val} МЗР', fontsize=13, fontweight='bold')
+            ax.set_title(f'{mod_order}-QAM | ИНЛ {inl_temp} МЗР', fontsize=13, fontweight='bold')
             ax.set_xlabel('Сложность модели (Количество параметров)', fontsize=11)
             ax.set_ylabel('Штраф на уровне FEC (дБ)', fontsize=11)
             ax.xaxis.set_major_formatter(ticker.FuncFormatter(lambda x, _: f'{int(x):,}'))
@@ -122,7 +123,7 @@ def complexity_vs_penalty_plot(results, fec_snr, model_params, snr_arr, folder_n
             fig.tight_layout()
             save_path = os.path.join(
                 folder_name,
-                f'Complexity_vs_FEC_Penalty_{mod_order}QAM_INL{inl_val}LSB.png'
+                f'Complexity_vs_FEC_Penalty_{mod_order}QAM_INL{inl_temp}LSB.png'
             )
             fig.savefig(save_path, dpi=150, bbox_inches='tight')
             plt.show()
@@ -429,7 +430,7 @@ def simulate_channel_and_rx(bits, qam, shaped_signal_pure, up_signal, symbol_sig
 
         ######## Getting symbols back on SPS = 1
         if phase_noise_en:
-            if mod_order == 32:# and inl_en == 4:
+            if mod_order == 32:
                 downsampled = downsampled_after_adc * np.exp(-1j * 2 * np.pi * _cfo * np.arange(len(downsampled_after_adc)) / (fs * sps))
             else:
                 ### First take for the signal
@@ -710,16 +711,17 @@ def main():
     for mod_order in TEST_MOD_ORDERS:
         ideal_snr = fec_snr.get((mod_order, 0, 'Ideal'), np.nan)
         for inl_val in TEST_INL_VALS:
+            inl_temp = 1.25 if inl_val < 2.5 else 2.5
             for m_name in ['No_DPD'] + MODELS_TO_TEST:
                 snr_val = fec_snr.get((mod_order, inl_val, m_name), np.nan)
                 penalty = snr_val - ideal_snr if not np.isnan(snr_val) else np.nan
                 penalty_str = f"+{penalty:.2f} дБ" if not np.isnan(penalty) else "Н/Д"
                 snr_str = f"{snr_val:.2f} дБ"  if not np.isnan(snr_val) else "Н/Д"
-                print(f"{mod_order}-QAM      {inl_val:>5} {m_name:<10} {snr_str:>10} {penalty_str:>10}")
+                print(f"{mod_order}-QAM      {inl_temp:>5} {m_name:<10} {snr_str:>10} {penalty_str:>10}")
         print("-" * 70)
 
     for inl_val in TEST_INL_VALS:
-
+        
         fig, ax = plt.subplots(figsize=(13, 8))
 
         for (m_order, i_val, m_name), data in results.items():
@@ -734,30 +736,32 @@ def main():
             snr_val = fec_snr.get((m_order, i_val, m_name), np.nan)
             penalty = snr_val - ideal_snr
 
+            inl_temp = 1.25 if inl_val < 2.5 else 2.5
+            
             if m_name == 'Ideal':
-                label = f'{m_order}-QAM  Идеальный случай (без ИНЛ) | ОСШ@FEC={snr_val:.2f} дБ'
+                label = f'{m_order}-QAM  Идеальный случай (без ИНЛ) | ОСШ@КОБ={snr_val:.2f} дБ'
             elif m_name == 'No_DPD':
-                label = (f'{m_order}-QAM  ИНЛ {inl_val} МЗР | '
-                         f'SNR@FEC = {snr_val:.2f} дБ  Штраф = +{penalty:.2f} дБ')
+                label = (f'{m_order}-QAM  ИНЛ {inl_temp} МЗР | '
+                         f'ОСШ@КОБ = {snr_val:.2f} дБ  Штраф = +{penalty:.2f} дБ')
             else:
-                label = (f'{m_order}-QAM  ИНЛ {inl_val} МЗР + {m_name} | '
-                         f'SNR@FEC={snr_val:.2f} дБ  Штраф = +{penalty:.2f} дБ')
+                label = (f'{m_order}-QAM  ИНЛ {inl_temp} МЗР + {m_name} | '
+                         f'ОСШ@КОБ={snr_val:.2f} дБ  Штраф = +{penalty:.2f} дБ')
 
             ax.plot(snr_arr, data['ber'], marker=marker, linestyle=ls, color=color, label=label)
 
             if not np.isnan(snr_val):
                 ax.axvline(x=snr_val, color=color, linestyle=':', linewidth=1.2, alpha=0.55)
 
-        ax.axhline(y = FEC_LIMIT, color = 'black', linestyle = ':', linewidth = 2, label = f'Уровень FEC ({FEC_LIMIT:.2e})')
+        ax.axhline(y = FEC_LIMIT, color = 'black', linestyle = ':', linewidth = 2, label = f'Уровень КОБ ({FEC_LIMIT:.2e})')
         ax.set_yscale('log')
         ax.set_ylim(bottom = 1e-5, top = 1e-2)
-        ax.set_xlabel('ОСШ (дБ)', fontsize = 12)
+        ax.set_xlabel('ОСШ, дБ', fontsize = 12)
         ax.set_ylabel('КОБ', fontsize = 12)
-        ax.set_title(f'Зависимость КОБ от ОСШ | 32-QAM и 64-QAM | ИНЛ {inl_val} МЗР', fontsize = 13)
+        ax.set_title(f'Зависимость КОБ от ОСШ | 32-QAM и 64-QAM | ИНЛ {inl_temp} МЗР', fontsize = 13)
         ax.legend(loc = 'lower left', fontsize = 9)
         ax.grid(True, which = 'both', ls = '--', alpha = 0.6)
         fig.tight_layout()
-        fig.savefig(os.path.join(folder_name, f'BER_Both_QAM_INL_{inl_val}LSB.png'), dpi = 150)
+        fig.savefig(os.path.join(folder_name, f'BER_Both_QAM_INL_{inl_temp}LSB.png'), dpi = 150)
         plt.show()
 
         fig2, ax2 = plt.subplots(figsize = (13, 7))
@@ -766,6 +770,8 @@ def main():
             if not (i_val == inl_val or m_name == 'Ideal'):
                 continue
 
+            inl_temp = 1.25 if inl_val < 2.5 else 2.5
+
             marker = 's' if m_order == 32 else 'o'
             ls = '--' if m_order == 32 else '-'
             color = COLOR_MAP.get(m_name, 'black')
@@ -773,9 +779,9 @@ def main():
             if m_name == 'Ideal':
                 label = f'{m_order}-QAM  Идеальный случай (без ИНЛ)'
             elif m_name == 'No_DPD':
-                label = f'{m_order}-QAM  ИНЛ {inl_val} МЗР'
+                label = f'{m_order}-QAM  ИНЛ {inl_temp} МЗР'
             else:
-                label = f'{m_order}-QAM  ИНЛ {inl_val} МЗР + {m_name}'
+                label = f'{m_order}-QAM  ИНЛ {inl_temp} МЗР + {m_name}'
             
             ### Save the final constellation
             cf.constellation_plot(data['symbols'], m_order, title = label, 
@@ -783,25 +789,29 @@ def main():
 
             ax2.plot(snr_arr, data['nmse'], marker = marker, linestyle = ls, color = color, label = label)
 
-        ax2.set_xlabel('SNR (дБ)', fontsize = 12)
-        ax2.set_ylabel('NMSE (дБ)', fontsize = 12)
-        ax2.set_title(f'Зависимость NMSE от SNR | 32-QAM и 64-QAM | ИНЛ {inl_val} МЗР', fontsize = 13)
+        ax2.set_xlabel('SNR, дБ', fontsize = 12)
+        ax2.set_ylabel('NMSE, дБ', fontsize = 12)
+        ax2.set_title(f'Зависимость NMSE от SNR | 32-QAM и 64-QAM | ИНЛ {inl_temp} МЗР', fontsize = 13)
         ax2.legend(loc = 'lower left', fontsize = 9)
         ax2.grid(True, ls = '--', alpha = 0.6)
         fig2.tight_layout()
-        fig2.savefig(os.path.join(folder_name, f'NMSE_Both_QAM_INL_{inl_val}LSB.png'), dpi = 150)
+        fig2.savefig(os.path.join(folder_name, f'NMSE_Both_QAM_INL_{inl_temp}LSB.png'), dpi = 150)
         plt.show()
 
-        fig3, axes = plt.subplots(1, len(TEST_MOD_ORDERS), figsize = (6 * len(TEST_MOD_ORDERS), 6), sharey = False)
+        '''fig3, axes = plt.subplots(1, len(TEST_MOD_ORDERS), figsize = (6 * len(TEST_MOD_ORDERS), 6), sharey = False)
         if len(TEST_MOD_ORDERS) == 1:
-            axes = [axes]
+            axes = [axes]'''
 
-        for ax3, mod_order in zip(axes, TEST_MOD_ORDERS):
+
+        for mod_order in TEST_MOD_ORDERS:
+            fig3, ax3 = plt.subplots(figsize=(7, 6))
+            
             ideal_snr = fec_snr.get((mod_order, 0, 'Ideal'), np.nan)
             cases  = ['No_DPD'] + MODELS_TO_TEST
-            labels = ['Без DPD'] + MODELS_TO_TEST
+            labels = ['Без предварительного искажения'] + MODELS_TO_TEST
             penalties = []
             bar_colors = []
+            
             for case in cases:
                 snr_val = fec_snr.get((mod_order, inl_val, case), np.nan)
                 pen = snr_val - ideal_snr if not np.isnan(snr_val) else 0.0
@@ -817,22 +827,23 @@ def main():
                          ha='center', va='bottom', fontsize=10, fontweight='bold')
 
             ax3.axhline(0, color='red', linewidth=1.2, linestyle='--', alpha=0.7)
-            ax3.set_title(f'{mod_order}-QAM | ИНЛ {inl_val} МЗР', fontsize=12)
-            ax3.set_ylabel('Штраф FEC (дБ)', fontsize=11)
+            
+            ax3.set_title(
+                f'{mod_order}-QAM | ИНЛ {inl_temp} МЗР\n'
+                f'(Штраф относительно идеального случая, КОБ = {FEC_LIMIT:.2e})', 
+                fontsize=12
+            )
+            ax3.set_ylabel('Штраф, дБ', fontsize=11)
             ax3.set_xlabel('Предысказитель (Модель)', fontsize=11)
             ax3.grid(axis='y', ls='--', alpha=0.5)
 
             y_min, y_max = ax3.get_ylim()
             ax3.set_ylim(y_min, y_max * 1.25 if y_max > 0 else y_max)
 
-        fig3.suptitle(
-            f'Штраф FEC для разных моделей | ИНЛ {inl_val} МЗР\n'
-            f'(ОСШ относительно идеального, КОБ = {FEC_LIMIT:.2e})',
-            fontsize=13
-        )
-        fig3.tight_layout()
-        fig3.savefig(os.path.join(folder_name, f'FEC_Penalty_INL_{inl_val}LSB.png'), dpi=150)
-        plt.show()
+            fig3.tight_layout()
+            fig3.savefig(os.path.join(folder_name, f'FEC_Penalty_{mod_order}QAM_INL_{inl_temp}LSB.png'), dpi=150)
+            plt.show()
+            plt.close(fig3)
 
     complexity_vs_penalty_plot(
         results = results,
